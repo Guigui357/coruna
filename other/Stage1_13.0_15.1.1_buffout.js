@@ -100,7 +100,7 @@ class E {
             return String.fromCharCode(x ^ 69);
         }).join(""))).zn.Nn.zohDDd) && (s &= o), x.T(i, s)
     }
-    rr(t) {
+    readInt64FromOffset(t) {
         const r = this.br(t),
             i = this.br(t + 4);
         return new x.Vt(r, i)
@@ -168,7 +168,7 @@ class E {
     }
     Br(t, ...r) {
         const i = new Array(r.length + 10);
-        for (let t = 0; t < r.length; t++) i[t] = this.rr(r[t].Ir);
+        for (let t = 0; t < r.length; t++) i[t] = this.readInt64FromOffset(r[t].Ir);
         try {
             for (let t = 0; t < r.length; t++) this.Jr(r[t].Ir, r[t].Zt);
             t()

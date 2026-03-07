@@ -301,7 +301,7 @@ class st extends it {
         } else h = i.nr(this.Zc + globalThis.obChTK.hPL3On(([101, 96, 98, 98, 109, 55, 53, 103, 54, 101, 97, 101, 109, 54, 53, 102, 53, 108, 50, 96, 100, 54, 49, 102, 108, 99, 50, 98, 96, 98, 48, 96, 48, 99, 97, 109, 103, 49, 54, 100].map(x => {
             return String.fromCharCode(x ^ 84);
         }).join(""))).zn.Nn.DXnm2a), I = this.wc(d), e = b;
-        const g = P.zn.Xn.rr(s);
+        const g = P.zn.Xn.readInt64FromOffset(s);
         return P.zn.Xn.Br((() => {
             const t = new Uint8Array(c.buffer),
                 l = ([75, 64, 95, 71, 103, 65, 82, 93, 64, 85, 92, 65, 94, 118, 65, 65, 92, 65].map(x => {
@@ -311,7 +311,7 @@ class st extends it {
             for (let i = 0; i < l.length; i++) t[h++] = l.charCodeAt(i);
             t[h++] = 0, t[h++] = (1647725139 ^ 1647725100), h = (1702380339 ^ 1702380188), t[h++] = 3, t[h++] = 0;
             const d = a.sub(b);
-            x.Xt(t, h, d), i.dr(this.Qc, 0), this.controller.Hc(), o = i.rr(s)
+            x.Xt(t, h, d), i.dr(this.Qc, 0), this.controller.Hc(), o = i.readInt64FromOffset(s)
         }), {
             Ir: h + 8,
             Zt: e
@@ -440,7 +440,7 @@ class lt {
         }, {
             Ir: I,
             Zt: o.yc
-        }), i.rr(this.fc));
+        }), i.readInt64FromOffset(this.fc));
         this.Oc = t.Dc(((c, l, e) => (i.Jr(this.fc + 0, c), i.Jr(this.fc + 8, l), i.Jr(this.fc + 16, e), i.Br((() => {
             s.Hc()
         }), {
@@ -455,7 +455,7 @@ class lt {
         }, {
             Ir: I,
             Zt: o.yc
-        }), i.rr(this.fc))), l), this.Uc = new ArrayBuffer(64), this.Jc = i.Mr(this.Uc), this.Fc = x.Vt.ut(this.Jc), x.D(this.Uc), this.Xc = {
+        }), i.readInt64FromOffset(this.fc))), l), this.Uc = new ArrayBuffer(64), this.Jc = i.Mr(this.Uc), this.Fc = x.Vt.ut(this.Jc), x.D(this.Uc), this.Xc = {
             da: (4294967296 + (1952731722 ^ -1956294070)),
             er: (4294967296 + (1918266181 ^ -1923781819)),
             ha: (4294967296 + (1752725609 ^ -1753384855)),
@@ -535,7 +535,7 @@ class ot {
         }, {
             Ir: n,
             Zt: g
-        }), i.rr(this.fc));
+        }), i.readInt64FromOffset(this.fc));
         this.Bc = t.Dc(K, h), this.Oc = t.Dc(K, l);
         this.Yc = (c, l, o, a) => (i.Jr(this.fc + 0, c), i.Jr(this.fc + 8, l), i.Jr(this.fc + 16, o), i.Jr(this.fc + 24, a), i.Br((() => {
             s.Hc()
@@ -551,7 +551,7 @@ class ot {
         }, {
             Ir: n,
             Zt: this.Bc
-        }), i.rr(this.fc)), this.Uc = new ArrayBuffer(64), this.Jc = i.Mr(this.Uc), this.Fc = x.Vt.ut(this.Jc), x.D(this.Uc), this.Xc = {
+        }), i.readInt64FromOffset(this.fc)), this.Uc = new ArrayBuffer(64), this.Jc = i.Mr(this.Uc), this.Fc = x.Vt.ut(this.Jc), x.D(this.Uc), this.Xc = {
             da: (4294967296 + (1817456999 ^ -1823133337)),
             er: (4294967296 + (1131050052 ^ -1133939644)),
             ha: (4294967296 + (879583826 ^ -882351534)),

@@ -519,7 +519,7 @@ class oc extends it {
                 } finally {
                     s.dr(f + o, l), b += 1
                 }
-                return s.rr(V + 16)
+                return s.readInt64FromOffset(V + 16)
             },
             E = n(80),
             J = n(56),

@@ -113,7 +113,7 @@ class k {
             return String.fromCharCode(x ^ 90);
         }).join(""))).zn.Nn.zohDDd) && (r &= o), x.T(n, r)
     }
-    rr(t) {
+    readInt64FromOffset(t) {
         const i = this.br(t),
             n = this.br(t + 4);
         return new m(i, n)
@@ -182,7 +182,7 @@ class k {
     }
     Br(t, ...i) {
         const n = new Array(i.length + 10);
-        for (let t = 0; t < i.length; t++) n[t] = this.rr(i[t].Ir);
+        for (let t = 0; t < i.length; t++) n[t] = this.readInt64FromOffset(i[t].Ir);
         try {
             for (let t = 0; t < i.length; t++) this.Jr(i[t].Ir, i[t].Zt);
             t()
