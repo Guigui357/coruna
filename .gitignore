@@ -8,3 +8,6 @@
 *.id1
 *.nam
 *.til
+
+# Decryption script output
+payloads_decrypted/
