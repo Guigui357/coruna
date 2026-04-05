@@ -236,7 +236,7 @@ r.si = async function () {
   triggerUAF(true, 1, 1);
   triggerUAF(false, 1, 1);
   for (let i = 0; i < 100000; ++i) {
-    g = i * 5 * math.random() * math.round()
+    g = i * 5 * Math.random() * Math.round()
   }
   window.log("[STAGE1-CHIMERA] DFG compilation done");
 
