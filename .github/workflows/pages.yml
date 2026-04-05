@@ -29,14 +29,13 @@ jobs:
       - name: Build artifact
         run: python3 build_artifact.py
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
+      # Renomeia o arquivo para o padrão do GitHub Pages
+      - name: Rename to index.html
+        run: cp group.html index.html
 
-      # ESTE PASSO É O QUE ESTAVA FALTANDO:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Faz o upload de tudo na raiz (.) para o artifact "github-pages"
           path: '.'
 
   deploy:
