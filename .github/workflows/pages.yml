@@ -1,4 +1,4 @@
-name: Deploy to GitHub Pages
+name: Deploy static content to Pages
 
 on:
   push:
@@ -31,6 +31,13 @@ jobs:
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
+
+      # ESTE PASSO É O QUE ESTAVA FALTANDO:
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # Faz o upload de tudo na raiz (.) para o artifact "github-pages"
+          path: '.'
 
   deploy:
     environment:
