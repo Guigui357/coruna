@@ -88,7 +88,7 @@ def build():
     print("=" * 60)
 
     # Read template
-    html = read_file("group.html")
+    html = read_file("index.html")
 
     # --- Step 1: Inline platform_module.js and utility_module.js ---
     print("\n[1] Inlining base modules...")
