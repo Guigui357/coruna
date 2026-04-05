@@ -171,8 +171,8 @@ const preTargets = {
 
 // Configuration
 const CONFIG = {
-  JIT_WARMUP: 5000,
-  MAX_ATTEMPTS: 5000,
+  JIT_WARMUP: 3000,
+  MAX_ATTEMPTS: 15000,
   SPRAY_PER_ATTEMPT: 64,
   ALLOC_MOD: 5,
   INNER_K: 10,
