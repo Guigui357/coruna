@@ -31,12 +31,12 @@ jobs:
 
       # Renomeia o arquivo para o padrão do GitHub Pages
       - name: Rename to index.html
-        run: cp group.html index.html
+        run: cp build/group.html build/index.html
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: '.'
+          path: './build'
 
   deploy:
     environment:
